@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx tsc
+
+      - run: node scripts/test-schedule.ts
+
+      - run: node scripts/test-add-args.ts
+
+      - run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts
+
+      - run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine.ts
+
+      - run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine-timers.ts
