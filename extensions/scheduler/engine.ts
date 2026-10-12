@@ -109,7 +109,7 @@ export class Engine {
     const data = updateStore((d) => ({ result: d }));
     const overdue = data.tasks.filter(
       (r) =>
-        r.enabled &&
+        
         inScope(r, this.host.cwd) &&
         Date.parse(r.next_fire_at) <= now.getTime() &&
         this.claimableByMe(data, r),
@@ -127,7 +127,7 @@ export class Engine {
     let task: ScheduledTask | null = null;
     const found = updateStore((data) => {
       const r = data.tasks.find((x) => x.id === id);
-      if (!r || !r.enabled) return { result: false };
+      if (!r) return { result: false };
       task = this.claim(data, r, true);
       return { result: true };
     });
@@ -174,7 +174,7 @@ export class Engine {
     const now = Date.now();
     for (const r of store.tasks) {
       if (this.stopped) return;
-      if (!r.enabled || !inScope(r, this.host.cwd)) continue;
+      if (!inScope(r, this.host.cwd)) continue;
       if (Date.parse(r.next_fire_at) > now) continue;
       if (this.pendingPick.has(r.id)) continue;
       if (!this.claimableByMe(store, r)) {
@@ -186,7 +186,7 @@ export class Engine {
       }
       const claimed = updateStore((d) => {
         const fresh = d.tasks.find((x) => x.id === r.id);
-        if (!fresh || !fresh.enabled) return { result: "gone" as ClaimResult };
+        if (!fresh) return { result: "gone" as ClaimResult };
         if (Date.parse(fresh.next_fire_at) > Date.now()) return { result: "not_due" as ClaimResult };
         if (!this.claimableByMe(d, fresh)) return { result: "held" as ClaimResult };
         this.claim(d, fresh, false);
@@ -238,7 +238,7 @@ export class Engine {
     }
     const now = Date.now();
     for (const r of store.tasks) {
-      if (!r.enabled || !inScope(r, this.host.cwd) || this.pendingPick.has(r.id)) continue;
+      if (!inScope(r, this.host.cwd) || this.pendingPick.has(r.id)) continue;
       if (!this.claimableByMe(store, r)) continue;
       const delay = Date.parse(r.next_fire_at) - now;
       if (delay <= 0) continue;
@@ -285,7 +285,7 @@ export class Engine {
     const data = updateStore((d) => ({ result: d }));
     const byProject = new Map<string, number>();
     for (const r of data.tasks) {
-      if (!r.enabled || inScope(r, this.host.cwd)) continue;
+      if (inScope(r, this.host.cwd)) continue;
       const key = r.project_root ?? "global";
       byProject.set(key, (byProject.get(key) ?? 0) + 1);
     }

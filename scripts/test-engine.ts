@@ -68,7 +68,6 @@ function addScheduledTask(overrides: Partial<ScheduledTask>): ScheduledTask {
     created_at: new Date().toISOString(),
     next_fire_at: new Date(Date.now() - 1000).toISOString(), // already due
     last_fired_at: null,
-    enabled: true,
     ...overrides,
   };
   updateStore((data) => {

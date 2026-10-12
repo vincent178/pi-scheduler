@@ -43,7 +43,6 @@ for (let i = 0; i < iterations; i++) {
         created_at: new Date().toISOString(),
         next_fire_at: new Date().toISOString(),
         last_fired_at: null,
-        enabled: true,
       });
       return { result: null };
     });

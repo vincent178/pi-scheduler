@@ -39,8 +39,7 @@ function formatScheduledTask(r: ScheduledTask, mySession: string, store = readSt
       ? "this session"
       : `${shortId(r.sticky_session_id)}${isSessionAlive(store, r.sticky_session_id) ? "" : " (stale)"}`;
   const scope = r.scope === "global" ? "global" : `project:${r.project_root ?? "?"}`;
-  const state = r.enabled ? relTime(r.next_fire_at) : "disabled";
-  return `${r.id}  ${state}  [${scheduleDesc(r.schedule)}]  ${r.delivery}  ${scope}  owner:${owner}\n    ${r.prompt}`;
+  return `${r.id}  ${relTime(r.next_fire_at)}  [${scheduleDesc(r.schedule)}]  ${r.delivery}  ${scope}  owner:${owner}\n    ${r.prompt}`;
 }
 
 interface AddArgs {
@@ -159,7 +158,6 @@ export default function (pi: ExtensionAPI) {
             created_at: new Date().toISOString(),
             next_fire_at: initialNextFire(schedule),
             last_fired_at: null,
-            enabled: true,
           };
           updateStore((data) => {
             data.tasks.push(task);
@@ -224,7 +222,7 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           if (!engine?.fireNow(rest)) {
-            ctx.ui.notify(`no enabled task ${rest}`, "error");
+            ctx.ui.notify(`no task ${rest}`, "error");
             return;
           }
           ctx.ui.notify(`fired ${rest} — this session now owns it`, "info");

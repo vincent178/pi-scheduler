@@ -29,7 +29,6 @@ export interface ScheduledTask {
   created_at: string;
   next_fire_at: string;
   last_fired_at: string | null;
-  enabled: boolean;
 }
 
 export interface SessionPresence {
