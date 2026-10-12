@@ -80,7 +80,7 @@ export function parseSchedule(input: string, now: Date = new Date()): Schedule {
 // next_fire_at computation
 // ---------------------------------------------------------------------------
 
-/** First fire time for a freshly created reminder. */
+/** First fire time for a freshly created task. */
 export function initialNextFire(schedule: Schedule, now: Date = new Date()): string {
   if (schedule.type === "once") return schedule.at;
   return new Date(now.getTime() + schedule.every_minutes * 60_000).toISOString();
@@ -99,7 +99,7 @@ export function advanceNextFire(schedule: Schedule, now: Date = new Date()): str
 }
 
 /**
- * Coalesce overdue intervals: given a reminder whose next_fire_at is in the
+ * Coalesce overdue intervals: given a task whose next_fire_at is in the
  * past, return how many intervals were missed (>= 1 means overdue).
  */
 export function missedIntervals(schedule: Schedule, nextFireAt: string, now: Date = new Date()): number {

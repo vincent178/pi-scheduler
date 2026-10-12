@@ -1,5 +1,5 @@
-// /remind add argument-splitting verification. Run: node scripts/test-add-args.ts
-import { parseAddArgs } from "../extensions/reminder/index.ts";
+// /schedule add argument-splitting verification. Run: node scripts/test-add-args.ts
+import { parseAddArgs } from "../extensions/scheduler/index.ts";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {

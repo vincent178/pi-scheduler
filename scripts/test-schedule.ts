@@ -4,7 +4,7 @@ import {
   initialNextFire,
   advanceNextFire,
   missedIntervals,
-} from "../extensions/reminder/schedule.ts";
+} from "../extensions/scheduler/schedule.ts";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {

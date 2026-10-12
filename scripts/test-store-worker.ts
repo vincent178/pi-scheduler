@@ -1,12 +1,12 @@
-// Worker: performs store mutations against PI_REMINDER_DIR. Invoked by test-store.ts.
+// Worker: performs store mutations against PI_SCHEDULER_DIR. Invoked by test-store.ts.
 import {
   updateStore,
   registerSession,
   heartbeat,
   deregisterSession,
-  newReminderId,
+  newTaskId,
   logEvent,
-} from "../extensions/reminder/store.ts";
+} from "../extensions/scheduler/store.ts";
 
 const sessionId = process.argv[2];
 const iterations = Number(process.argv[3]);
@@ -30,11 +30,11 @@ for (let i = 0; i < iterations; i++) {
     return { result: null };
   });
   if (i % 5 === 0) {
-    const id = newReminderId();
+    const id = newTaskId();
     updateStore((data) => {
-      data.reminders.push({
+      data.tasks.push({
         id,
-        prompt: `worker ${sessionId} reminder ${i}`,
+        prompt: `worker ${sessionId} task ${i}`,
         schedule: { type: "interval", every_minutes: 30 },
         delivery: "prompt",
         scope: "project",

@@ -6,9 +6,9 @@ import {
   readStore,
   readLog,
   logEvent,
-  newReminderId,
+  newTaskId,
   isSessionAlive,
-  type Reminder,
+  type ScheduledTask,
   type Schedule,
 } from "./store.ts";
 import { resolveProjectRoot, inScope } from "./project.ts";
@@ -36,7 +36,7 @@ function shortId(id: string): string {
   return id.length > 12 ? `${id.slice(0, 4)}…${id.slice(-6)}` : id;
 }
 
-function formatReminder(r: Reminder, mySession: string, store = readStore()): string {
+function formatScheduledTask(r: ScheduledTask, mySession: string, store = readStore()): string {
   const owner = !r.sticky_session_id
     ? "unowned"
     : r.sticky_session_id === mySession
@@ -63,9 +63,9 @@ export function parseAddArgs(raw: string): AddArgs {
   const notify = /(^|\s)--notify(\s|$)/.test(raw);
   let rest = raw.replace(/\s*--global\b/g, "").replace(/\s*--notify\b/g, "").trim();
 
-  if (!rest) throw new Error("usage: /remind add <when> <prompt> [--global] [--notify]");
+  if (!rest) throw new Error("usage: /schedule add <when> <prompt> [--global] [--notify]");
 
-  // Explicit separator wins: "/remind add in 30m -- check the deploy"
+  // Explicit separator wins: "/schedule add in 30m -- check the deploy"
   const sep = rest.indexOf(" -- ");
   if (sep >= 0) {
     return { when: rest.slice(0, sep).trim(), prompt: rest.slice(sep + 4).trim(), global, notify };
@@ -83,7 +83,7 @@ export function parseAddArgs(raw: string): AddArgs {
     }
   }
   throw new Error(
-    `could not find a schedule in "${rest}". Use "/remind add <when> -- <prompt>" to separate explicitly.`,
+    `could not find a schedule in "${rest}". Use "/schedule add <when> -- <prompt>" to separate explicitly.`,
   );
 }
 
@@ -95,16 +95,16 @@ export default function (pi: ExtensionAPI) {
   let engine: Engine | null = null;
   let sessionId = "";
 
-  async function pickOverdue(overdue: Reminder[], ctx: ExtensionContext): Promise<void> {
+  async function pickOverdue(overdue: ScheduledTask[], ctx: ExtensionContext): Promise<void> {
     if (!ctx.hasUI) {
       const list = overdue.map((r) => `${r.id}: ${r.prompt}`).join("; ");
-      ctx.ui.notify(`⏰ ${overdue.length} overdue reminder(s) — ${list} — use /remind fire <id>`, "warning");
+      ctx.ui.notify(`⏰ ${overdue.length} overdue task(s) — ${list} — use /schedule fire <id>`, "warning");
       return;
     }
     for (const r of overdue) {
       const due = new Date(r.next_fire_at).toLocaleString();
       const fire = await ctx.ui.confirm(
-        "Overdue reminder",
+        "Overdue task",
         `⏰ ${r.prompt}\n\nwas due ${due} (${relTime(r.next_fire_at)})\n\nFire it now in this session?`,
       );
       if (fire && engine) {
@@ -136,7 +136,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("remind", {
-    description: "Manage reminders: add <when> <prompt> | list [--all] | remove <id> | fire <id> | log [n]",
+    description: "Manage tasks: add <when> <prompt> | list [--all] | remove <id> | fire <id> | log [n]",
     handler: async (args, ctx) => {
       const [sub, ...restTokens] = args.trim().split(/\s+/).filter(Boolean);
       const rest = restTokens.join(" ");
@@ -144,7 +144,7 @@ export default function (pi: ExtensionAPI) {
       switch (sub) {
         case "add": {
           if (!engine) {
-            ctx.ui.notify("reminder engine not running (no active session)", "error");
+            ctx.ui.notify("task engine not running (no active session)", "error");
             return;
           }
           let parsed: AddArgs;
@@ -157,11 +157,11 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           if (!parsed.prompt) {
-            ctx.ui.notify("missing reminder text", "error");
+            ctx.ui.notify("missing task text", "error");
             return;
           }
-          const reminder: Reminder = {
-            id: newReminderId(),
+          const task: ScheduledTask = {
+            id: newTaskId(),
             prompt: parsed.prompt,
             schedule,
             delivery: parsed.notify ? "notify" : "prompt",
@@ -174,19 +174,19 @@ export default function (pi: ExtensionAPI) {
             enabled: true,
           };
           updateStore((data) => {
-            data.reminders.push(reminder);
+            data.tasks.push(task);
             return { result: null };
           });
           logEvent("created", {
-            id: reminder.id,
+            id: task.id,
             session: sessionId,
             schedule: scheduleDesc(schedule),
-            delivery: reminder.delivery,
-            scope: reminder.scope,
+            delivery: task.delivery,
+            scope: task.scope,
           });
           engine.sweep();
           ctx.ui.notify(
-            `⏰ ${reminder.id} fires ${relTime(reminder.next_fire_at)} — "${reminder.prompt}" (${reminder.delivery}, ${reminder.scope})`,
+            `⏰ ${task.id} fires ${relTime(task.next_fire_at)} — "${task.prompt}" (${task.delivery}, ${task.scope})`,
             "info",
           );
           return;
@@ -196,14 +196,14 @@ export default function (pi: ExtensionAPI) {
         case "ls": {
           const all = restTokens.includes("--all");
           const store = readStore();
-          const reminders = store.reminders.filter((r) => all || inScope(r, ctx.cwd));
-          if (reminders.length === 0) {
-            ctx.ui.notify(all ? "no reminders at all" : "no reminders in scope — /remind list --all for everything", "info");
+          const tasks = store.tasks.filter((r) => all || inScope(r, ctx.cwd));
+          if (tasks.length === 0) {
+            ctx.ui.notify(all ? "no tasks at all" : "no tasks in scope — /schedule list --all for everything", "info");
             return;
           }
-          const lines = reminders
+          const lines = tasks
             .sort((a, b) => Date.parse(a.next_fire_at) - Date.parse(b.next_fire_at))
-            .map((r) => formatReminder(r, sessionId, store));
+            .map((r) => formatScheduledTask(r, sessionId, store));
           ctx.ui.notify(lines.join("\n"), "info");
           return;
         }
@@ -211,17 +211,17 @@ export default function (pi: ExtensionAPI) {
         case "remove":
         case "rm": {
           if (!rest) {
-            ctx.ui.notify("usage: /remind remove <id>", "error");
+            ctx.ui.notify("usage: /schedule remove <id>", "error");
             return;
           }
           const removed = updateStore((data) => {
-            const r = data.reminders.find((x) => x.id === rest);
-            if (!r) return { result: null as Reminder | null };
-            data.reminders = data.reminders.filter((x) => x.id !== rest);
+            const r = data.tasks.find((x) => x.id === rest);
+            if (!r) return { result: null as ScheduledTask | null };
+            data.tasks = data.tasks.filter((x) => x.id !== rest);
             return { result: r };
           });
           if (!removed) {
-            ctx.ui.notify(`no reminder ${rest}`, "error");
+            ctx.ui.notify(`no task ${rest}`, "error");
             return;
           }
           logEvent("cancelled", { id: rest, session: sessionId });
@@ -232,11 +232,11 @@ export default function (pi: ExtensionAPI) {
 
         case "fire": {
           if (!rest) {
-            ctx.ui.notify("usage: /remind fire <id>", "error");
+            ctx.ui.notify("usage: /schedule fire <id>", "error");
             return;
           }
           if (!engine?.fireNow(rest)) {
-            ctx.ui.notify(`no enabled reminder ${rest}`, "error");
+            ctx.ui.notify(`no enabled task ${rest}`, "error");
             return;
           }
           ctx.ui.notify(`fired ${rest} — this session now owns it`, "info");
@@ -263,7 +263,7 @@ export default function (pi: ExtensionAPI) {
 
         default:
           ctx.ui.notify(
-            "usage: /remind add <when> <prompt> [--global] [--notify] | list [--all] | remove <id> | fire <id> | log [n]",
+            "usage: /schedule add <when> <prompt> [--global] [--notify] | list [--all] | remove <id> | fire <id> | log [n]",
             "info",
           );
       }

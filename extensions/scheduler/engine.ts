@@ -6,7 +6,7 @@ import {
   deregisterSession,
   logEvent,
   SESSION_STALE_MS,
-  type Reminder,
+  type ScheduledTask,
   type StoreData,
 } from "./store.ts";
 import { advanceNextFire } from "./schedule.ts";
@@ -40,13 +40,13 @@ export type ClaimResult =
 
 const HEARTBEAT_MS = 30_000;
 const SWEEP_MS = 60_000;
-/** setTimeout clamps past this; rely on the sweep for far-future reminders. */
+/** setTimeout clamps past this; rely on the sweep for far-future tasks. */
 const MAX_TIMER_MS = 2_147_483_647;
 /** Session registry entries older than this are pruned by the sweep. */
 const SESSION_PRUNE_MS = 10 * SESSION_STALE_MS;
 
-export function reminderText(r: Reminder): string {
-  return `⏰ Reminder: ${r.prompt}`;
+export function taskText(r: ScheduledTask): string {
+  return `⏰ Scheduled task: ${r.prompt}`;
 }
 
 export class Engine {
@@ -55,10 +55,10 @@ export class Engine {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private sweepTimer: NodeJS.Timeout | null = null;
   private unsubscribeIdle: (() => void) | null = null;
-  private queue: Reminder[] = [];
-  /** Overdue reminders awaiting the session-start pick; never auto-fired. */
+  private queue: ScheduledTask[] = [];
+  /** Overdue tasks awaiting the session-start pick; never auto-fired. */
   private pendingPick = new Set<string>();
-  /** Reminders already logged as held, to keep the run log quiet. */
+  /** ScheduledTasks already logged as held, to keep the run log quiet. */
   private heldLogged = new Set<string>();
   private stopped = false;
 
@@ -73,11 +73,11 @@ export class Engine {
   // -------------------------------------------------------------------------
 
   /**
-   * Register presence, mark overdue reminders pending-pick (never auto-fired),
+   * Register presence, mark overdue tasks pending-pick (never auto-fired),
    * start heartbeat/sweep/idle plumbing, and return the overdue list so the
    * caller can drive the pick UI. Must run from session_start.
    */
-  start(): Reminder[] {
+  start(): ScheduledTask[] {
     const { sessionId, cwd, projectRoot } = this.host;
     updateStore((data) => {
       registerSession(data, sessionId, { pid: process.pid, cwd, project_root: projectRoot });
@@ -85,7 +85,7 @@ export class Engine {
     });
     logEvent("session_registered", { session: sessionId, cwd, project_root: projectRoot });
 
-    // Before any sweep can fire them: overdue reminders wait for the pick.
+    // Before any sweep can fire them: overdue tasks wait for the pick.
     const overdue = this.collectOverdue();
 
     this.heartbeatTimer = setInterval(() => {
@@ -134,12 +134,12 @@ export class Engine {
   // -------------------------------------------------------------------------
 
   /**
-   * Collect overdue, in-scope, claimable reminders and mark them pending-pick
+   * Collect overdue, in-scope, claimable tasks and mark them pending-pick
    * so timers/sweeps never auto-fire them. Returns them for the picker UI.
    */
-  collectOverdue(now: Date = new Date()): Reminder[] {
+  collectOverdue(now: Date = new Date()): ScheduledTask[] {
     const data = updateStore((d) => ({ result: d }));
-    const overdue = data.reminders.filter(
+    const overdue = data.tasks.filter(
       (r) =>
         r.enabled &&
         inScope(r, this.host.cwd) &&
@@ -154,25 +154,25 @@ export class Engine {
   }
 
   /**
-   * User picked an overdue reminder (or ran /remind fire): force-claim it for
+   * User picked an overdue task (or ran /schedule fire): force-claim it for
    * this session regardless of due time or current owner, then deliver.
    */
   fireNow(id: string): boolean {
     this.pendingPick.delete(id);
-    let reminder: Reminder | null = null;
+    let task: ScheduledTask | null = null;
     const result = updateStore((data) => {
-      const r = data.reminders.find((x) => x.id === id);
+      const r = data.tasks.find((x) => x.id === id);
       if (!r || !r.enabled) return { result: "gone" as ClaimResult };
-      reminder = this.claim(data, r, true);
+      task = this.claim(data, r, true);
       return { result: r.sticky_session_id === this.host.sessionId ? ("claimed" as ClaimResult) : ("gone" as ClaimResult) };
     });
-    if (result === "gone" || !reminder) return false;
-    this.deliver(reminder);
+    if (result === "gone" || !task) return false;
+    this.deliver(task);
     this.armTimers();
     return true;
   }
 
-  /** Leave an overdue reminder unfired; it stays pending-pick (snoozed) until next session start. */
+  /** Leave an overdue task unfired; it stays pending-pick (snoozed) until next session start. */
   snoozeOverdue(id: string): void {
     logEvent("overdue_snoozed", { id, session: this.host.sessionId });
   }
@@ -208,11 +208,11 @@ export class Engine {
     }
   }
 
-  /** Fire every due, in-scope reminder this session may claim. Exported for tests. */
+  /** Fire every due, in-scope task this session may claim. Exported for tests. */
   fireDue(data?: StoreData): void {
     const store = data ?? updateStore((d) => ({ result: d }));
     const now = Date.now();
-    for (const r of store.reminders) {
+    for (const r of store.tasks) {
       if (this.stopped) return;
       if (!r.enabled || !inScope(r, this.host.cwd)) continue;
       if (Date.parse(r.next_fire_at) > now) continue;
@@ -225,7 +225,7 @@ export class Engine {
         continue;
       }
       const claimed = updateStore((d) => {
-        const fresh = d.reminders.find((x) => x.id === r.id);
+        const fresh = d.tasks.find((x) => x.id === r.id);
         if (!fresh || !fresh.enabled) return { result: "gone" as ClaimResult };
         if (Date.parse(fresh.next_fire_at) > Date.now()) return { result: "not_due" as ClaimResult };
         if (!this.claimableByMe(d, fresh)) return { result: "held" as ClaimResult };
@@ -236,7 +236,7 @@ export class Engine {
     }
   }
 
-  private claimableByMe(data: StoreData, r: Reminder): boolean {
+  private claimableByMe(data: StoreData, r: ScheduledTask): boolean {
     if (!r.sticky_session_id || r.sticky_session_id === this.host.sessionId) return true;
     return !isSessionAlive(data, r.sticky_session_id);
   }
@@ -245,7 +245,7 @@ export class Engine {
    * Mutate the store to record this session's firing: sticky ownership moves
    * here, intervals advance (coalescing misses), one-shots are deleted.
    */
-  private claim(data: StoreData, r: Reminder, force: boolean): Reminder {
+  private claim(data: StoreData, r: ScheduledTask, force: boolean): ScheduledTask {
     const previousOwner = r.sticky_session_id;
     const transferred = previousOwner !== null && previousOwner !== this.host.sessionId;
     const now = new Date();
@@ -253,10 +253,10 @@ export class Engine {
     r.sticky_session_id = this.host.sessionId;
     r.last_fired_at = now.toISOString();
     if (r.schedule.type === "once") {
-      data.reminders = data.reminders.filter((x) => x.id !== r.id);
+      data.tasks = data.tasks.filter((x) => x.id !== r.id);
     } else {
       r.next_fire_at = force && Date.parse(r.next_fire_at) > now.getTime()
-        ? r.next_fire_at // manual fire of a future reminder keeps its slot
+        ? r.next_fire_at // manual fire of a future task keeps its slot
         : advanceNextFire(r.schedule, now)!;
     }
 
@@ -271,10 +271,10 @@ export class Engine {
     return snapshot;
   }
 
-  /** Arm timers for future reminders this session may end up claiming. */
+  /** Arm timers for future tasks this session may end up claiming. */
   private armTimers(data?: StoreData): void {
     const store = data ?? updateStore((d) => ({ result: d }));
-    const live = new Set(store.reminders.map((r) => r.id));
+    const live = new Set(store.tasks.map((r) => r.id));
     for (const [id, t] of this.timers) {
       if (!live.has(id)) {
         clearTimeout(t);
@@ -282,11 +282,11 @@ export class Engine {
       }
     }
     const now = Date.now();
-    for (const r of store.reminders) {
+    for (const r of store.tasks) {
       if (!r.enabled || !inScope(r, this.host.cwd) || this.pendingPick.has(r.id)) continue;
       if (!this.claimableByMe(store, r)) continue;
       const delay = Date.parse(r.next_fire_at) - now;
-      if (delay <= 0) continue; // due reminders are handled by fireDue
+      if (delay <= 0) continue; // due tasks are handled by fireDue
       if (this.timers.has(r.id)) continue;
       const timer = setTimeout(() => {
         this.timers.delete(r.id);
@@ -301,10 +301,10 @@ export class Engine {
   // Delivery
   // -------------------------------------------------------------------------
 
-  private deliver(r: Reminder): void {
+  private deliver(r: ScheduledTask): void {
     try {
       if (r.delivery === "notify") {
-        this.host.notify(reminderText(r));
+        this.host.notify(taskText(r));
         return;
       }
       if (this.host.isBusy()) {
@@ -312,7 +312,7 @@ export class Engine {
         logEvent("deferred", { id: r.id, session: this.host.sessionId, reason: "agent busy" });
         return;
       }
-      this.host.deliverPrompt(reminderText(r));
+      this.host.deliverPrompt(taskText(r));
     } catch (err) {
       logEvent("error", { id: r.id, session: this.host.sessionId, message: `deliver: ${String(err)}` });
     }
@@ -323,7 +323,7 @@ export class Engine {
     for (const r of queued) {
       logEvent("deferred_flush", { id: r.id, session: this.host.sessionId });
       try {
-        this.host.deliverPrompt(reminderText(r));
+        this.host.deliverPrompt(taskText(r));
       } catch (err) {
         logEvent("error", { id: r.id, session: this.host.sessionId, message: `flush: ${String(err)}` });
       }
@@ -337,7 +337,7 @@ export class Engine {
   private emitDigest(): void {
     const data = updateStore((d) => ({ result: d }));
     const byProject = new Map<string, number>();
-    for (const r of data.reminders) {
+    for (const r of data.tasks) {
       if (!r.enabled || inScope(r, this.host.cwd)) continue;
       const key = r.project_root ?? "global";
       byProject.set(key, (byProject.get(key) ?? 0) + 1);
@@ -346,6 +346,6 @@ export class Engine {
     const total = [...byProject.values()].reduce((a, b) => a + b, 0);
     const parts = [...byProject.entries()].map(([p, n]) => `${p} (${n})`).join(", ");
     logEvent("digest", { session: this.host.sessionId, count: total, projects: [...byProject.keys()] });
-    this.host.notify(`⏰ ${total} pending reminder${total === 1 ? "" : "s"} in other projects: ${parts} — /remind list --all`);
+    this.host.notify(`⏰ ${total} pending task${total === 1 ? "" : "s"} in other projects: ${parts} — /schedule list --all`);
   }
 }

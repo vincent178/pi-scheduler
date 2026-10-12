@@ -23,15 +23,15 @@ export type Schedule = OnceSchedule | IntervalSchedule;
 export type Delivery = "prompt" | "notify";
 export type Scope = "project" | "global";
 
-export interface Reminder {
+export interface ScheduledTask {
   id: string;
   prompt: string;
   schedule: Schedule;
   delivery: Delivery;
   scope: Scope;
-  /** Project root for project-scoped reminders; null for global. */
+  /** Project root for project-scoped tasks; null for global. */
   project_root: string | null;
-  /** Session that owns this reminder while alive; null = unowned. */
+  /** Session that owns this task while alive; null = unowned. */
   sticky_session_id: string | null;
   created_at: string;
   next_fire_at: string;
@@ -49,7 +49,7 @@ export interface SessionPresence {
 
 export interface StoreData {
   version: 1;
-  reminders: Reminder[];
+  tasks: ScheduledTask[];
   sessions: Record<string, SessionPresence>;
 }
 
@@ -64,19 +64,19 @@ export interface LogEvent {
 // ---------------------------------------------------------------------------
 
 export function dataDir(): string {
-  return process.env.PI_REMINDER_DIR ?? path.join(os.homedir(), ".pi", "agent");
+  return process.env.PI_SCHEDULER_DIR ?? path.join(os.homedir(), ".pi", "agent");
 }
 
 export function storePath(): string {
-  return path.join(dataDir(), "reminders.json");
+  return path.join(dataDir(), "scheduler.json");
 }
 
 export function logPath(): string {
-  return path.join(dataDir(), "reminders.log");
+  return path.join(dataDir(), "scheduler.log");
 }
 
 function lockPath(): string {
-  return path.join(dataDir(), "reminders.lock");
+  return path.join(dataDir(), "scheduler.lock");
 }
 
 function ensureDir(): void {
@@ -114,7 +114,7 @@ function acquireLock(): void {
         continue;
       }
       if (Date.now() - start > LOCK_MAX_WAIT_MS) {
-        throw new Error(`timed out acquiring reminder store lock at ${lockPath()}`);
+        throw new Error(`timed out acquiring task store lock at ${lockPath()}`);
       }
       const wait = LOCK_RETRY_MS + Math.floor(Math.random() * LOCK_RETRY_MS);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
@@ -145,7 +145,7 @@ export function withLock<T>(fn: () => T): T {
 // ---------------------------------------------------------------------------
 
 function emptyStore(): StoreData {
-  return { version: 1, reminders: [], sessions: {} };
+  return { version: 1, tasks: [], sessions: {} };
 }
 
 export function readStore(): StoreData {
@@ -162,7 +162,7 @@ export function readStore(): StoreData {
     return {
       ...parsed,
       version: 1,
-      reminders: Array.isArray(parsed.reminders) ? parsed.reminders : [],
+      tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
       sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
     };
   } catch {
@@ -219,14 +219,14 @@ export function heartbeat(data: StoreData, sessionId: string): void {
 }
 
 /**
- * Remove a session from the registry and release every reminder it owned, so
+ * Remove a session from the registry and release every task it owned, so
  * another in-scope session can claim them without waiting for staleness.
- * Returns the ids of reminders whose stickiness was released.
+ * Returns the ids of tasks whose stickiness was released.
  */
 export function deregisterSession(data: StoreData, sessionId: string): string[] {
   delete data.sessions[sessionId];
   const released: string[] = [];
-  for (const r of data.reminders) {
+  for (const r of data.tasks) {
     if (r.sticky_session_id === sessionId) {
       r.sticky_session_id = null;
       released.push(r.id);
@@ -307,6 +307,6 @@ export function readLog(tail = 0): LogEvent[] {
 // Ids
 // ---------------------------------------------------------------------------
 
-export function newReminderId(): string {
-  return `r-${Date.now().toString(36)}-${crypto.randomBytes(3).toString("hex")}`;
+export function newTaskId(): string {
+  return `t-${Date.now().toString(36)}-${crypto.randomBytes(3).toString("hex")}`;
 }

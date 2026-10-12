@@ -1,5 +1,5 @@
 // Store layer verification: concurrent writers, stale-lock stealing, log cap.
-// Run: PI_REMINDER_DIR=$(mktemp -d) node scripts/test-store.ts
+// Run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -11,7 +11,7 @@ import {
   updateStore,
   logEvent,
   readLog,
-} from "../extensions/reminder/store.ts";
+} from "../extensions/scheduler/store.ts";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -19,8 +19,8 @@ function check(name: string, ok: boolean, detail = ""): void {
   if (!ok) failures++;
 }
 
-if (!process.env.PI_REMINDER_DIR) {
-  console.error("set PI_REMINDER_DIR to a scratch directory");
+if (!process.env.PI_SCHEDULER_DIR) {
+  console.error("set PI_SCHEDULER_DIR to a scratch directory");
   process.exit(2);
 }
 
@@ -53,9 +53,9 @@ check(
   `total=${counters?.total}, expected=${WORKERS * ITERATIONS}`,
 );
 check(
-  "every worker reminder persisted",
-  store.reminders.length === WORKERS * Math.ceil(ITERATIONS / 5),
-  `reminders=${store.reminders.length}`,
+  "every worker task persisted",
+  store.tasks.length === WORKERS * Math.ceil(ITERATIONS / 5),
+  `tasks=${store.tasks.length}`,
 );
 check(
   "deregistered sessions removed from registry",
@@ -64,7 +64,7 @@ check(
 );
 check(
   "deregister released all stickiness",
-  store.reminders.every((r) => r.sticky_session_id === null),
+  store.tasks.every((r) => r.sticky_session_id === null),
 );
 
 // --- store is valid JSON on disk --------------------------------------------
@@ -72,11 +72,11 @@ JSON.parse(fs.readFileSync(storePath(), "utf8"));
 check("store file parses as JSON after concurrent writes", true);
 
 // --- stale lock stealing ------------------------------------------------------
-const staleLock = path.join(dataDir(), "reminders.lock");
+const staleLock = path.join(dataDir(), "scheduler.lock");
 fs.writeFileSync(staleLock, "999999");
 const old = new Date(Date.now() - 60_000);
 fs.utimesSync(staleLock, old, old);
-const stole = updateStore((data) => ({ result: data.reminders.length }));
+const stole = updateStore((data) => ({ result: data.tasks.length }));
 check("stale lock stolen and update succeeded", typeof stole === "number");
 check("lock released after steal", !fs.existsSync(staleLock));
 
