@@ -50,4 +50,4 @@ Store/engine tests must use a fresh `PI_SCHEDULER_DIR` scratch dir — never the
 ## Git
 
 - Work on a feature branch; never push to `main` directly. Commit and push after every
-  change. Confirm before opening or merging a PR.
+  change, then open a PR automatically with `gh pr create`. Confirm before merging a PR.
