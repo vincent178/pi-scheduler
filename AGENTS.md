@@ -12,7 +12,7 @@ time B. A notify-only task is just a reminder. See README.md for the full design
 
 ## Code style
 
-- **如非必要，勿增实体**：不引入没有真实使用方的字段、状态、变体或分支。状态尽量由现有数据推导，而不是新增字段承载。
+- **Occam's razor**: never introduce a field, state, variant, or branch without a real consumer. Derive state from existing data instead of adding fields to carry it.
 - **Comments**: only document non-obvious constraints, invariants, or external behavior
   (e.g. the no-lock tolerance contract, heartbeat/staleness relation, chrono parsing
   workarounds, pi lifecycle ordering). Do not narrate what the code already says.
