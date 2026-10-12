@@ -23,13 +23,7 @@ export interface EngineHost {
   onIdle(cb: () => void): () => void;
 }
 
-export type ClaimResult =
-  | "claimed"
-  | "transferred"
-  | "held"
-  | "not_due"
-  | "gone"
-  | "pending_pick";
+export type ClaimResult = "claimed" | "held" | "not_due" | "gone" | "pending_pick";
 
 const HEARTBEAT_MS = 30_000;
 const SWEEP_MS = 60_000;
