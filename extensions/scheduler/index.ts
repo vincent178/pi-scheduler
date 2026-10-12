@@ -157,7 +157,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "schedule_task",
+    name: "schedule",
     label: "Schedule Task",
     description: [
       "Schedule a task for later: at fire time the prompt is injected as a user message for the agent to execute (with notify=true it is only a passive reminder).",

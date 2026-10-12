@@ -8,7 +8,7 @@ delivery is just a reminder.
 ## Features
 
 - **Natural-language schedules** — `in 30m`, `at 15:00`, `every 45 minutes`, ISO dates
-- **Agent tool** — the `schedule_task` tool lets the agent schedule tasks straight from conversation, in any language: "PR 上线了，24小时后查一下 bugsnag" becomes a scheduled task
+- **Agent tool** — the `schedule` tool lets the agent schedule tasks straight from conversation, in any language: "PR 上线了，24小时后查一下 bugsnag" becomes a scheduled task
 - **Prompt or notify delivery** — prompts inject a user message the agent executes (default); notifications are passive
 - **Project scoping** — a task fires only in the project that scheduled it (git repo root, or the creating directory for non-git projects); `global` tasks fire anywhere
 - **Session stickiness** — the scheduling session owns the task while it's alive; whichever session fires a task owns its next firings; ownership transfers when the owner closes or goes stale
@@ -43,7 +43,7 @@ pi -e .
 
 ## Agent tool
 
-The agent can schedule tasks itself via the `schedule_task` tool — just say what should
+The agent can schedule tasks itself via the `schedule` tool — just say what should
 happen and when, in any language:
 
 ```text
@@ -118,7 +118,7 @@ Tests (plain `node`, no build step — Node ≥ 22.6 strips types natively):
 npx tsc                                        # type check
 node scripts/test-schedule.ts                  # schedule parsing
 node scripts/test-add-args.ts                  # /schedule add arg splitting
-node scripts/test-tool-schedule.ts             # schedule_task tool params
+node scripts/test-tool-schedule.ts             # schedule tool params
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts          # store concurrency
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine.ts         # engine, two sessions
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine-timers.ts  # real-timer firing
