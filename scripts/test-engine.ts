@@ -82,7 +82,6 @@ updateStore((data) => {
 const engineA = new Engine(hostA);
 const engineB = new Engine(hostB);
 
-// --- 1. unowned due task: first session to fire claims stickiness ---------
 const r1 = addScheduledTask({});
 engineA.fireDue();
 check("A fires unowned due task", hostA.prompts.length === 1, hostA.prompts[0]);
@@ -90,11 +89,9 @@ let store = readStore();
 check("firing sets sticky_session_id to A", store.tasks[0]?.sticky_session_id === "session-A");
 check("interval next_fire_at advanced into the future", Date.parse(store.tasks[0].next_fire_at) > Date.now());
 
-// --- 2. same task not due elsewhere: B cannot fire it ----------------------
 engineB.fireDue();
 check("B does not double-fire (not due)", hostB.prompts.length === 0);
 
-// --- 3. when due again, live sticky owner holds it ----------------------------
 updateStore((data) => {
   data.tasks[0].next_fire_at = new Date(Date.now() - 1000).toISOString();
   return { result: null };
@@ -104,7 +101,6 @@ check("B held while A alive (sticky_held)", hostB.prompts.length === 0);
 engineA.fireDue();
 check("owner A fires its own task", hostA.prompts.length === 2);
 
-// --- 4. stale owner -> ownership transfers to the next claimer ------------------
 updateStore((data) => {
   data.tasks[0].next_fire_at = new Date(Date.now() - 1000).toISOString();
   data.sessions["session-A"] = new Date(Date.now() - 10 * 60_000).toISOString();
@@ -115,23 +111,21 @@ store = readStore();
 check("B fires after A goes stale", hostB.prompts.length === 1);
 check("stickiness transferred to B", store.tasks[0]?.sticky_session_id === "session-B");
 
-// --- 5. racing claims: exactly one session fires -------------------------------
+// Sequential claims: the second session observes the first's write and skips.
+// (A true cross-process race may double-fire; that loss is tolerated by design.)
 const r2 = addScheduledTask({ prompt: "race target" });
-// simulate a race: B claims first inside the same tick A would have used
 engineA.fireDue();
 engineB.fireDue();
 const raceFires = hostA.prompts.filter((p) => p.includes("race target")).length +
   hostB.prompts.filter((p) => p.includes("race target")).length;
-check("racing sessions fire exactly once", raceFires === 1, `fires=${raceFires}`);
+check("second sequential claim does not re-fire", raceFires === 1, `fires=${raceFires}`);
 
-// --- 6. one-shot tasks are deleted after firing ------------------------------
 const r3 = addScheduledTask({ prompt: "one shot", schedule: { type: "once", at: new Date(Date.now() - 1000).toISOString() } });
 engineA.fireDue();
 store = readStore();
 check("one-shot fired", hostA.prompts.some((p) => p.includes("one shot")));
 check("one-shot deleted after firing", !store.tasks.some((r) => r.id === r3.id));
 
-// --- 7. busy queue: prompt queued while busy, flushed on idle --------------------
 const r4 = addScheduledTask({ prompt: "busy test", sticky_session_id: "session-B" });
 hostB.busy = true;
 engineB.fireDue();
@@ -140,14 +134,12 @@ hostB.busy = false;
 hostB.idle();
 check("queued prompt flushed on idle", hostB.prompts.some((p) => p.includes("busy test")));
 
-// --- 8. notify delivery fires immediately even while busy -------------------------
 const r5 = addScheduledTask({ prompt: "notify test", delivery: "notify", sticky_session_id: "session-B" });
 hostB.busy = true;
 engineB.fireDue();
 check("notify delivered while busy", hostB.notifies.some((n) => n.includes("notify test")));
 hostB.busy = false;
 
-// --- 9. scope: task for another project is invisible ---------------------------
 const r6 = addScheduledTask({ prompt: "foreign project", project_root: "/other" });
 engineA.fireDue();
 engineB.fireDue();
@@ -155,7 +147,6 @@ check("out-of-scope task never fires", !hostA.prompts.concat(hostB.prompts).some
 store = readStore();
 check("out-of-scope task never claimed", store.tasks.some((r) => r.id === r6.id && r.sticky_session_id === null));
 
-// --- 10. overdue pick flow: pending tasks never auto-fire ----------------------
 const hostC = mockHost("session-C", "/proj");
 const engineC = new Engine(hostC);
 updateStore((data) => {
@@ -174,7 +165,6 @@ check("picking transfers stickiness", store.tasks.find((r) => r.id === r7.id)?.s
 engineC.snoozeOverdue("nonexistent"); // must not throw
 check("snooze is safe for unknown ids", true);
 
-// --- 11. shutdown releases sticky claims --------------------------------------------
 const engineD = new Engine(mockHost("session-D", "/proj"));
 engineD.start();
 store = readStore();

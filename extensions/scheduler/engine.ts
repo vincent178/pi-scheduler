@@ -153,7 +153,8 @@ export class Engine {
       return { result: d };
     });
     this.fireDue(data);
-    this.armTimers(data);
+    // fireDue may have advanced next_fire_at; arm from a fresh read.
+    this.armTimers();
   }
 
   private pruneSessions(data: StoreData): void {

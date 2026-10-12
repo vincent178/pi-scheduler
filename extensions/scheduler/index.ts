@@ -52,7 +52,7 @@ interface AddArgs {
 export function parseAddArgs(raw: string): AddArgs {
   const global = /(^|\s)--global(\s|$)/.test(raw);
   const notify = /(^|\s)--notify(\s|$)/.test(raw);
-  let rest = raw.replace(/\s*--global\b/g, "").replace(/\s*--notify\b/g, "").trim();
+  let rest = raw.replace(/(^|\s)--global(?=\s|$)/g, "$1").replace(/(^|\s)--notify(?=\s|$)/g, "$1").trim();
 
   if (!rest) throw new Error("usage: /schedule add <when> <prompt> [--global] [--notify]");
 

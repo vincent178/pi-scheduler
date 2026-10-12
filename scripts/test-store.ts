@@ -1,6 +1,7 @@
-// Store layer verification: concurrent writers, stale-lock stealing, log cap.
+// Store layer verification: concurrent writers, atomicity under races, log cap.
 // Run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -23,20 +24,19 @@ if (!process.env.PI_SCHEDULER_DIR) {
   process.exit(2);
 }
 
-// --- concurrent writers -----------------------------------------------------
 const WORKERS = 6;
 const ITERATIONS = 25;
 const workerScript = path.resolve("scripts/test-store-worker.ts");
 
 const runWorker = (id: string) =>
-  execFileSync(process.execPath, [workerScript, id, String(ITERATIONS)], { stdio: "pipe" });
+  promisify(execFile)(process.execPath, [workerScript, id, String(ITERATIONS)]);
 
 const results: string[] = [];
 const errors: string[] = [];
 await Promise.all(
   Array.from({ length: WORKERS }, (_, i) => `s-${i}`).map((id) =>
-    Promise.resolve()
-      .then(() => results.push(runWorker(id).toString().trim()))
+    runWorker(id)
+      .then(({ stdout }) => results.push(stdout.trim()))
       .catch((e) => errors.push(`${id}: ${e.message}`)),
   ),
 );
@@ -64,11 +64,9 @@ check(
   store.tasks.every((r) => r.sticky_session_id === null),
 );
 
-// --- store is valid JSON on disk --------------------------------------------
 JSON.parse(fs.readFileSync(storePath(), "utf8"));
 check("store file parses as JSON after concurrent writes", true);
 
-// --- run log append + cap ------------------------------------------------------
 logEvent("test_marker", { n: 1 });
 const marker = readLog().find((e) => e.event === "test_marker");
 check("log event appended and readable", marker?.n === 1);

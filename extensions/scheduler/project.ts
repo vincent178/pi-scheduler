@@ -19,6 +19,6 @@ export function resolveProjectRoot(cwd: string): string {
 export function inScope(task: Pick<ScheduledTask, "scope" | "project_root">, cwd: string): boolean {
   if (task.scope === "global") return true;
   if (!task.project_root) return false;
-  const root = task.project_root;
-  return cwd === root || cwd.startsWith(root + path.sep);
+  const rel = path.relative(task.project_root, cwd);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }

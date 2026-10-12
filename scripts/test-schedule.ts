@@ -11,7 +11,6 @@ function check(name: string, ok: boolean, detail = ""): void {
 const now = new Date(2026, 0, 7, 10, 0, 0);
 const M = 60_000;
 
-// --- intervals ---------------------------------------------------------------
 for (const [input, minutes] of [
   ["every 45 minutes", 45],
   ["every 2 hours", 120],
@@ -29,7 +28,6 @@ for (const [input, minutes] of [
   );
 }
 
-// --- one-shot -----------------------------------------------------------------
 const in30 = parseSchedule("in 30m", now);
 check(
   '"in 30m" -> once 30 minutes ahead',
@@ -100,7 +98,6 @@ try {
 }
 check("sub-minute interval rejected", threw);
 
-// --- next_fire_at --------------------------------------------------------------
 const onceAt = initialNextFire({ type: "once", at: "2026-01-08T09:00:00.000Z" }, now);
 check("initialNextFire(once) echoes at", onceAt === "2026-01-08T09:00:00.000Z");
 

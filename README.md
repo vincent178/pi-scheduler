@@ -24,7 +24,7 @@ pi install git:github.com/vincent178/pi-scheduler
 Or load once without installing:
 
 ```bash
-pi -e ./pi-scheduler
+pi -e .
 ```
 
 ## Usage
@@ -93,7 +93,7 @@ One-shot tasks are deleted from the store after firing — the run log is their 
 
 ```bash
 npm install
-pi -e ./pi-scheduler
+pi -e .
 ```
 
 Tests (plain `node`, no build step — Node ≥ 22.6 strips types natively):
