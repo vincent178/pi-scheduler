@@ -3,13 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export interface OnceSchedule {
   type: "once";
-  /** ISO 8601 timestamp */
   at: string;
 }
 
@@ -29,9 +24,7 @@ export interface ScheduledTask {
   schedule: Schedule;
   delivery: Delivery;
   scope: Scope;
-  /** Project root for project-scoped tasks; null for global. */
   project_root: string | null;
-  /** Session that owns this task while alive; null = unowned. */
   sticky_session_id: string | null;
   created_at: string;
   next_fire_at: string;
@@ -43,7 +36,6 @@ export interface SessionPresence {
   pid: number;
   cwd: string;
   project_root: string;
-  /** ISO 8601; a session is alive only while this stays fresh. */
   heartbeat_at: string;
 }
 
@@ -58,10 +50,6 @@ export interface LogEvent {
   event: string;
   [key: string]: unknown;
 }
-
-// ---------------------------------------------------------------------------
-// Paths
-// ---------------------------------------------------------------------------
 
 export function dataDir(): string {
   return process.env.PI_SCHEDULER_DIR ?? path.join(os.homedir(), ".pi", "agent");
@@ -79,13 +67,8 @@ function ensureDir(): void {
   fs.mkdirSync(dataDir(), { recursive: true });
 }
 
-// ---------------------------------------------------------------------------
-// Store read/write
-// ---------------------------------------------------------------------------
-
-// Writes are atomic (tmp-write + rename) so a reader never sees a torn file,
-// and corrupt files are quarantined on read. There is no cross-process lock:
-// a concurrent update may occasionally be lost, which this design tolerates.
+// No cross-process lock: writes are atomic (tmp-write + rename) and a lost
+// concurrent update is tolerated. Corrupt files are quarantined on read.
 
 function emptyStore(): StoreData {
   return { version: 1, tasks: [], sessions: {} };
@@ -109,7 +92,6 @@ export function readStore(): StoreData {
       sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
     };
   } catch {
-    // Preserve the corrupt file for inspection, then start clean.
     fs.renameSync(storePath(), `${storePath()}.corrupt-${Date.now()}`);
     return emptyStore();
   }
@@ -122,8 +104,6 @@ function writeStore(data: StoreData): void {
   fs.renameSync(tmp, storePath());
 }
 
-/** Read-modify-write. The mutator receives the current store, may mutate it
- *  (or return a replacement via `data`), and returns a `result` for the caller. */
 export function updateStore<T>(fn: (data: StoreData) => { data?: StoreData; result: T }): T {
   const current = readStore();
   const { data, result } = fn(current);
@@ -131,11 +111,7 @@ export function updateStore<T>(fn: (data: StoreData) => { data?: StoreData; resu
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// Session presence registry
-// ---------------------------------------------------------------------------
-
-/** Heartbeats older than this mark a session dead (heartbeat interval is 30s). */
+// A session is dead once its heartbeat is older than this (heartbeat: 30s).
 export const SESSION_STALE_MS = 90_000;
 
 export function isSessionAlive(data: StoreData, sessionId: string, now = Date.now()): boolean {
@@ -157,11 +133,7 @@ export function heartbeat(data: StoreData, sessionId: string): void {
   if (s) s.heartbeat_at = new Date().toISOString();
 }
 
-/**
- * Remove a session from the registry and release every task it owned, so
- * another in-scope session can claim them without waiting for staleness.
- * Returns the ids of tasks whose stickiness was released.
- */
+/** Also releases the session's sticky claims; returns the released task ids. */
 export function deregisterSession(data: StoreData, sessionId: string): string[] {
   delete data.sessions[sessionId];
   const released: string[] = [];
@@ -173,10 +145,6 @@ export function deregisterSession(data: StoreData, sessionId: string): string[] 
   }
   return released;
 }
-
-// ---------------------------------------------------------------------------
-// Run log (append-only JSONL, capped)
-// ---------------------------------------------------------------------------
 
 const LOG_CAP_BYTES = 1_000_000;
 const LOG_KEEP_BYTES = 500_000;
@@ -231,10 +199,6 @@ export function readLog(tail = 0): LogEvent[] {
   }
   return tail > 0 ? events.slice(-tail) : events;
 }
-
-// ---------------------------------------------------------------------------
-// Ids
-// ---------------------------------------------------------------------------
 
 export function newTaskId(): string {
   return `t-${Date.now().toString(36)}-${crypto.randomBytes(3).toString("hex")}`;

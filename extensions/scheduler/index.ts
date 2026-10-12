@@ -13,10 +13,6 @@ import {
 } from "./store.ts";
 import { resolveProjectRoot, inScope } from "./project.ts";
 
-// ---------------------------------------------------------------------------
-// Formatting helpers
-// ---------------------------------------------------------------------------
-
 function relTime(iso: string, now = Date.now()): string {
   const diff = Date.parse(iso) - now;
   const abs = Math.abs(diff);
@@ -47,10 +43,6 @@ function formatScheduledTask(r: ScheduledTask, mySession: string, store = readSt
   return `${r.id}  ${state}  [${scheduleDesc(r.schedule)}]  ${r.delivery}  ${scope}  owner:${owner}\n    ${r.prompt}`;
 }
 
-// ---------------------------------------------------------------------------
-// add-subcommand argument parsing
-// ---------------------------------------------------------------------------
-
 interface AddArgs {
   when: string;
   prompt: string;
@@ -65,13 +57,13 @@ export function parseAddArgs(raw: string): AddArgs {
 
   if (!rest) throw new Error("usage: /schedule add <when> <prompt> [--global] [--notify]");
 
-  // Explicit separator wins: "/schedule add in 30m -- check the deploy"
+  // " -- " separates schedule from prompt explicitly; otherwise the longest
+  // leading prefix that parses as a schedule wins.
   const sep = rest.indexOf(" -- ");
   if (sep >= 0) {
     return { when: rest.slice(0, sep).trim(), prompt: rest.slice(sep + 4).trim(), global, notify };
   }
 
-  // Otherwise find the longest leading prefix that parses as a schedule.
   const words = rest.split(/\s+/);
   for (let i = words.length - 1; i >= 1; i--) {
     const when = words.slice(0, i).join(" ");
@@ -86,10 +78,6 @@ export function parseAddArgs(raw: string): AddArgs {
     `could not find a schedule in "${rest}". Use "/schedule add <when> -- <prompt>" to separate explicitly.`,
   );
 }
-
-// ---------------------------------------------------------------------------
-// Extension
-// ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
   let engine: Engine | null = null;
@@ -135,7 +123,7 @@ export default function (pi: ExtensionAPI) {
     engine = null;
   });
 
-  pi.registerCommand("remind", {
+  pi.registerCommand("schedule", {
     description: "Manage tasks: add <when> <prompt> | list [--all] | remove <id> | fire <id> | log [n]",
     handler: async (args, ctx) => {
       const [sub, ...restTokens] = args.trim().split(/\s+/).filter(Boolean);

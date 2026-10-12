@@ -12,19 +12,12 @@ import {
 import { advanceNextFire } from "./schedule.ts";
 import { inScope } from "./project.ts";
 
-// ---------------------------------------------------------------------------
-// Host abstraction: keeps the engine testable without a live pi session.
-// ---------------------------------------------------------------------------
-
 export interface EngineHost {
   sessionId: string;
   cwd: string;
   projectRoot: string;
-  /** Inject a user message the agent acts on. */
   deliverPrompt(text: string): void;
-  /** Passive UI notification. */
   notify(text: string): void;
-  /** True while the agent is mid-turn; prompt deliveries queue until idle. */
   isBusy(): boolean;
   /** Subscribe to agent-settled; returns an unsubscribe function. */
   onIdle(cb: () => void): () => void;
@@ -40,9 +33,8 @@ export type ClaimResult =
 
 const HEARTBEAT_MS = 30_000;
 const SWEEP_MS = 60_000;
-/** setTimeout clamps past this; rely on the sweep for far-future tasks. */
+// setTimeout clamps past this; the sweep covers far-future tasks.
 const MAX_TIMER_MS = 2_147_483_647;
-/** Session registry entries older than this are pruned by the sweep. */
 const SESSION_PRUNE_MS = 10 * SESSION_STALE_MS;
 
 export function taskText(r: ScheduledTask): string {
@@ -58,25 +50,16 @@ export class Engine {
   private queue: ScheduledTask[] = [];
   /** Overdue tasks awaiting the session-start pick; never auto-fired. */
   private pendingPick = new Set<string>();
-  /** ScheduledTasks already logged as held, to keep the run log quiet. */
   private heldLogged = new Set<string>();
   private stopped = false;
 
   constructor(host: EngineHost) {
     this.host = host;
-    // Busy-queue plumbing is session-lifetime, independent of start().
+    // Subscribed here, not in start(), so tests can drive delivery without timers.
     this.unsubscribeIdle = this.host.onIdle(() => this.flushQueue());
   }
 
-  // -------------------------------------------------------------------------
-  // Lifecycle
-  // -------------------------------------------------------------------------
-
-  /**
-   * Register presence, mark overdue tasks pending-pick (never auto-fired),
-   * start heartbeat/sweep/idle plumbing, and return the overdue list so the
-   * caller can drive the pick UI. Must run from session_start.
-   */
+  /** Must run from session_start. Returns overdue tasks for the pick UI. */
   start(): ScheduledTask[] {
     const { sessionId, cwd, projectRoot } = this.host;
     updateStore((data) => {
@@ -85,7 +68,7 @@ export class Engine {
     });
     logEvent("session_registered", { session: sessionId, cwd, project_root: projectRoot });
 
-    // Before any sweep can fire them: overdue tasks wait for the pick.
+    // Overdue tasks must be pending-pick before the first sweep can fire them.
     const overdue = this.collectOverdue();
 
     this.heartbeatTimer = setInterval(() => {
@@ -108,7 +91,6 @@ export class Engine {
     return overdue;
   }
 
-  /** Idempotent: clear timers, flush nothing, release presence + sticky claims. */
   shutdown(): void {
     if (this.stopped) return;
     this.stopped = true;
@@ -129,14 +111,6 @@ export class Engine {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Overdue pick flow (session start)
-  // -------------------------------------------------------------------------
-
-  /**
-   * Collect overdue, in-scope, claimable tasks and mark them pending-pick
-   * so timers/sweeps never auto-fire them. Returns them for the picker UI.
-   */
   collectOverdue(now: Date = new Date()): ScheduledTask[] {
     const data = updateStore((d) => ({ result: d }));
     const overdue = data.tasks.filter(
@@ -153,10 +127,7 @@ export class Engine {
     return overdue;
   }
 
-  /**
-   * User picked an overdue task (or ran /schedule fire): force-claim it for
-   * this session regardless of due time or current owner, then deliver.
-   */
+  /** Force-claim for this session regardless of due time or current owner, then deliver. */
   fireNow(id: string): boolean {
     this.pendingPick.delete(id);
     let task: ScheduledTask | null = null;
@@ -172,14 +143,10 @@ export class Engine {
     return true;
   }
 
-  /** Leave an overdue task unfired; it stays pending-pick (snoozed) until next session start. */
+  /** Unpicked overdue tasks stay pending until the next session start. */
   snoozeOverdue(id: string): void {
     logEvent("overdue_snoozed", { id, session: this.host.sessionId });
   }
-
-  // -------------------------------------------------------------------------
-  // Sweep + timers
-  // -------------------------------------------------------------------------
 
   private safeSweep(): void {
     try {
@@ -208,7 +175,6 @@ export class Engine {
     }
   }
 
-  /** Fire every due, in-scope task this session may claim. Exported for tests. */
   fireDue(data?: StoreData): void {
     const store = data ?? updateStore((d) => ({ result: d }));
     const now = Date.now();
@@ -241,10 +207,6 @@ export class Engine {
     return !isSessionAlive(data, r.sticky_session_id);
   }
 
-  /**
-   * Mutate the store to record this session's firing: sticky ownership moves
-   * here, intervals advance (coalescing misses), one-shots are deleted.
-   */
   private claim(data: StoreData, r: ScheduledTask, force: boolean): ScheduledTask {
     const previousOwner = r.sticky_session_id;
     const transferred = previousOwner !== null && previousOwner !== this.host.sessionId;
@@ -271,7 +233,6 @@ export class Engine {
     return snapshot;
   }
 
-  /** Arm timers for future tasks this session may end up claiming. */
   private armTimers(data?: StoreData): void {
     const store = data ?? updateStore((d) => ({ result: d }));
     const live = new Set(store.tasks.map((r) => r.id));
@@ -286,7 +247,7 @@ export class Engine {
       if (!r.enabled || !inScope(r, this.host.cwd) || this.pendingPick.has(r.id)) continue;
       if (!this.claimableByMe(store, r)) continue;
       const delay = Date.parse(r.next_fire_at) - now;
-      if (delay <= 0) continue; // due tasks are handled by fireDue
+      if (delay <= 0) continue;
       if (this.timers.has(r.id)) continue;
       const timer = setTimeout(() => {
         this.timers.delete(r.id);
@@ -296,10 +257,6 @@ export class Engine {
       this.timers.set(r.id, timer);
     }
   }
-
-  // -------------------------------------------------------------------------
-  // Delivery
-  // -------------------------------------------------------------------------
 
   private deliver(r: ScheduledTask): void {
     try {
@@ -329,10 +286,6 @@ export class Engine {
       }
     }
   }
-
-  // -------------------------------------------------------------------------
-  // Cross-project digest
-  // -------------------------------------------------------------------------
 
   private emitDigest(): void {
     const data = updateStore((d) => ({ result: d }));
