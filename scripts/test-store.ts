@@ -9,6 +9,7 @@ import {
   logPath,
   readStore,
   updateStore,
+  deregisterSession,
   logEvent,
   readLog,
 } from "../extensions/scheduler/store.ts";
@@ -43,6 +44,13 @@ await Promise.all(
 
 check("all workers completed", errors.length === 0, errors.join("; "));
 for (const line of results) console.log(`       ${line}`);
+
+// A worker's final deregister write can be lost to a concurrent stale
+// read-modify-write (tolerated, no-lock contract). Re-deregister serially here
+// so the assertions below test deregisterSession semantics, not race luck.
+for (const id of Object.keys(readStore().sessions)) {
+  updateStore((data) => ({ result: deregisterSession(data, id) }));
+}
 
 const store = readStore();
 const counters = (store as unknown as { counters?: { total?: number } }).counters;
