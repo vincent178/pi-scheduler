@@ -39,6 +39,48 @@ pi -e ./pi-reminder
 /remind log             # recent run-log events
 ```
 
+## Scopes
+
+- **project** (default) — fires only when the session's working directory is at or under the
+  project root. The project root is the git repo root when inside a repo, otherwise the
+  directory the reminder was created in (non-git directories are first-class projects).
+- **global** (`--global`) — fires in any session.
+
+Project reminders are invisible elsewhere except as a one-line digest at session start:
+`⏰ N pending reminders in other projects: …`.
+
+## Delivery
+
+- **prompt** (default) — injects the reminder as a user message; the agent acts on it.
+- **notify** (`--notify`) — passive notification only.
+
+Reminders that come due while the agent is mid-turn are queued and delivered when the
+agent settles. Notifications are shown immediately.
+
+## Session stickiness
+
+The session that creates a reminder owns it while it is alive. When a reminder fires,
+the firing session becomes its owner, so recurring reminders keep landing in the same
+session. Ownership is released when the owning session shuts down (or its heartbeat goes
+stale after ~90s); the next in-scope session to reach fire time claims it. Stickiness
+never overrides project scoping. A lockfile-guarded claim in the store makes double-firing
+impossible even if two sessions race.
+
+## Missed reminders
+
+Reminders only fire while a pi session is running — there is no daemon. When a session
+starts, overdue in-scope reminders are listed one by one and you pick which to fire
+(picking also makes your session the owner). Unpicked reminders stay overdue and are
+listed again at the next session start.
+
+## Run log
+
+Every reminder event (`created`, `fired`, `deleted_after_fire`, `sticky_claimed`,
+`sticky_transferred`, `sticky_released`, `sticky_held_skip`, `deferred`, `overdue_listed`,
+`digest`, `cancelled`, `error`, …) is appended as one JSON line to the run log, capped at
+~1 MB (truncation keeps the newest entries). `/remind log [n]` shows the last n events.
+One-shot reminders are deleted from the store after firing — the run log is their history.
+
 ## Storage
 
 | File | Contents |
