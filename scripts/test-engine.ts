@@ -165,7 +165,8 @@ store = readStore();
 check("out-of-scope reminder untouched", store.reminders.some((r) => r.id === r6.id && r.last_fired_at === null));
 
 // --- 10. overdue pick flow: pending reminders never auto-fire ----------------------
-const engineC = new Engine(mockHost("session-C", "/proj"));
+const hostC = mockHost("session-C", "/proj");
+const engineC = new Engine(hostC);
 updateStore((data) => {
   registerSession(data, "session-C", { pid: 333, cwd: "/proj", project_root: "/proj" });
   return { result: null };
@@ -174,9 +175,9 @@ const r7 = addReminder({ prompt: "overdue pick me", next_fire_at: new Date(Date.
 const overdue = engineC.collectOverdue();
 check("collectOverdue lists due claimable reminders", overdue.some((r) => r.id === r7.id));
 engineC.fireDue();
-check("pending-pick reminder not auto-fired by fireDue", !engineC["host"].prompts.some((p) => p.includes("overdue pick me")));
+check("pending-pick reminder not auto-fired by fireDue", !hostC.prompts.some((p) => p.includes("overdue pick me")));
 const fired = engineC.fireNow(r7.id);
-check("fireNow delivers picked reminder", fired && engineC["host"].prompts.some((p) => p.includes("overdue pick me")));
+check("fireNow delivers picked reminder", fired && hostC.prompts.some((p) => p.includes("overdue pick me")));
 store = readStore();
 check("picking transfers stickiness", store.reminders.find((r) => r.id === r7.id)?.sticky_session_id === "session-C");
 engineC.snoozeOverdue("nonexistent"); // must not throw

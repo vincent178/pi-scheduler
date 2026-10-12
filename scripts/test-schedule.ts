@@ -129,9 +129,10 @@ check(
   `got ${missedIntervals(interval, missedFrom, now)}`,
 );
 check("missedIntervals -> 0 when not due", missedIntervals(interval, first, now) === 0);
+const onceAt2 = new Date(now.getTime() - M).toISOString();
 check(
   "missedIntervals(once) -> 1 when overdue",
-  missedIntervals({ type: "once", at: new Date(now.getTime() - M).toISOString() }, now) === 1,
+  missedIntervals({ type: "once", at: onceAt2 }, onceAt2, now) === 1,
 );
 
 console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);

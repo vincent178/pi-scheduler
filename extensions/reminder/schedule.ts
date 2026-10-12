@@ -57,9 +57,18 @@ export function parseSchedule(input: string, now: Date = new Date()): Schedule {
     ? `in ${shorthand[1]} ${UNITS[shorthand[2]] === 1 ? "minutes" : shorthand[2] === "s" ? "seconds" : shorthand[2] === "h" ? "hours" : "days"}`
     : text;
 
-  const parsed = chrono.parseDate(normalized, now, { forwardDate: true });
-  if (parsed && parsed.getTime() > now.getTime()) {
-    return { type: "once", at: parsed.toISOString() };
+  const results = chrono.parse(normalized, now, { forwardDate: true });
+  if (results.length > 0) {
+    // Strict: the matches must span the whole input, so "in 30m check the"
+    // is not accepted as a schedule (chrono finds dates anywhere in text).
+    const trimmedEnd = normalized.trimEnd().length;
+    const first = results[0];
+    const last = results[results.length - 1];
+    const covers = first.index === 0 && last.index + last.text.length >= trimmedEnd;
+    const date = (last.end ?? last.start).date();
+    if (covers && date.getTime() > now.getTime()) {
+      return { type: "once", at: date.toISOString() };
+    }
   }
 
   throw new Error(
