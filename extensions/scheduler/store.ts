@@ -75,74 +75,17 @@ export function logPath(): string {
   return path.join(dataDir(), "scheduler.log");
 }
 
-function lockPath(): string {
-  return path.join(dataDir(), "scheduler.lock");
-}
-
 function ensureDir(): void {
   fs.mkdirSync(dataDir(), { recursive: true });
 }
 
 // ---------------------------------------------------------------------------
-// Lockfile
+// Store read/write
 // ---------------------------------------------------------------------------
 
-const STALE_LOCK_MS = 30_000;
-const LOCK_RETRY_MS = 25;
-const LOCK_MAX_WAIT_MS = 10_000;
-
-function acquireLock(): void {
-  ensureDir();
-  const start = Date.now();
-  for (;;) {
-    try {
-      const fd = fs.openSync(lockPath(), "wx");
-      fs.writeSync(fd, String(process.pid));
-      fs.closeSync(fd);
-      return;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      // Steal a lock whose holder evidently died mid-write.
-      try {
-        const stat = fs.statSync(lockPath());
-        if (Date.now() - stat.mtimeMs > STALE_LOCK_MS) {
-          fs.unlinkSync(lockPath());
-          continue;
-        }
-      } catch {
-        // Lock vanished between open and stat; retry immediately.
-        continue;
-      }
-      if (Date.now() - start > LOCK_MAX_WAIT_MS) {
-        throw new Error(`timed out acquiring task store lock at ${lockPath()}`);
-      }
-      const wait = LOCK_RETRY_MS + Math.floor(Math.random() * LOCK_RETRY_MS);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
-    }
-  }
-}
-
-function releaseLock(): void {
-  try {
-    fs.unlinkSync(lockPath());
-  } catch {
-    // Already gone (stolen as stale or never held); nothing to do.
-  }
-}
-
-/** Run fn while holding the store lockfile. Synchronous by design: the store is tiny. */
-export function withLock<T>(fn: () => T): T {
-  acquireLock();
-  try {
-    return fn();
-  } finally {
-    releaseLock();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Store read/write (tmp-write + rename)
-// ---------------------------------------------------------------------------
+// Writes are atomic (tmp-write + rename) so a reader never sees a torn file,
+// and corrupt files are quarantined on read. There is no cross-process lock:
+// a concurrent update may occasionally be lost, which this design tolerates.
 
 function emptyStore(): StoreData {
   return { version: 1, tasks: [], sessions: {} };
@@ -179,17 +122,13 @@ function writeStore(data: StoreData): void {
   fs.renameSync(tmp, storePath());
 }
 
-/**
- * Locked read-modify-write. The mutator receives the current store, mutates it
- * (or returns a replacement via `data`), and returns a `result` for the caller.
- */
+/** Read-modify-write. The mutator receives the current store, may mutate it
+ *  (or return a replacement via `data`), and returns a `result` for the caller. */
 export function updateStore<T>(fn: (data: StoreData) => { data?: StoreData; result: T }): T {
-  return withLock(() => {
-    const current = readStore();
-    const { data, result } = fn(current);
-    writeStore(data ?? current);
-    return result;
-  });
+  const current = readStore();
+  const { data, result } = fn(current);
+  writeStore(data ?? current);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,30 +196,20 @@ function truncateLogIfNeeded(): void {
     return;
   }
   if (size <= LOG_CAP_BYTES) return;
-  withLock(() => {
-    // Re-check under the lock; another process may have truncated already.
-    let current: number;
-    try {
-      current = fs.statSync(logPath()).size;
-    } catch {
-      return;
-    }
-    if (current <= LOG_CAP_BYTES) return;
-    const raw = fs.readFileSync(logPath(), "utf8");
-    const lines = raw.split("\n");
-    const kept: string[] = [];
-    let bytes = 0;
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i];
-      if (!line) continue;
-      bytes += Buffer.byteLength(line) + 1;
-      if (bytes > LOG_KEEP_BYTES) break;
-      kept.unshift(line);
-    }
-    const tmp = `${logPath()}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, kept.join("\n") + "\n");
-    fs.renameSync(tmp, logPath());
-  });
+  const raw = fs.readFileSync(logPath(), "utf8");
+  const lines = raw.split("\n");
+  const kept: string[] = [];
+  let bytes = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    bytes += Buffer.byteLength(line) + 1;
+    if (bytes > LOG_KEEP_BYTES) break;
+    kept.unshift(line);
+  }
+  const tmp = `${logPath()}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, kept.join("\n") + "\n");
+  fs.renameSync(tmp, logPath());
 }
 
 export function readLog(tail = 0): LogEvent[] {

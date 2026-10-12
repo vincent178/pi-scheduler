@@ -64,8 +64,8 @@ The session that schedules a task owns it while it is alive. When a task fires, 
 session becomes its owner, so recurring tasks keep landing in the same session. Ownership
 is released when the owning session shuts down (or its heartbeat goes stale after ~90s);
 the next in-scope session to reach fire time claims it. Stickiness never overrides project
-scoping. A lockfile-guarded claim in the store makes double-firing impossible even if two
-sessions race.
+scoping. When two sessions race to fire the same task, the winner's write may very
+rarely be lost and both deliver — the store favors simplicity over serialization.
 
 ## Missed tasks
 
@@ -86,7 +86,7 @@ One-shot tasks are deleted from the store after firing — the run log is their 
 
 | File | Contents |
 |---|---|
-| `~/.pi/agent/scheduler.json` | task store + session presence registry (lockfile-guarded) |
+| `~/.pi/agent/scheduler.json` | task store + session presence registry (atomic tmp-write + rename) |
 | `~/.pi/agent/scheduler.log` | append-only JSONL run log, capped at ~1 MB |
 
 ## Development
