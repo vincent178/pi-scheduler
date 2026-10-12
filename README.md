@@ -8,7 +8,7 @@ delivery is just a reminder.
 ## Features
 
 - **Natural-language schedules** — `in 30m`, `at 15:00`, `every 45 minutes`, ISO dates
-- **Agent tool** — the `schedule` tool lets the agent schedule tasks straight from conversation, in any language: "PR 上线了，24小时后查一下 bugsnag" becomes a scheduled task
+- **Agent tools** — the agent manages tasks straight from conversation, in any language: "PR 上线了，24小时后查一下 bugsnag" becomes a scheduled task
 - **Prompt or notify delivery** — prompts inject a user message the agent executes (default); notifications are passive
 - **Project scoping** — a task fires only in the project that scheduled it (git repo root, or the creating directory for non-git projects); `global` tasks fire anywhere
 - **Session stickiness** — the scheduling session owns the task while it's alive; whichever session fires a task owns its next firings; ownership transfers when the owner closes or goes stale
@@ -41,19 +41,24 @@ pi -e .
 /schedule log             # recent run-log events
 ```
 
-## Agent tool
+## Agent tools
 
-The agent can schedule tasks itself via the `schedule` tool — just say what should
+The agent manages tasks itself via three tools — just say what should
 happen and when, in any language:
 
 ```text
 PR 已经合并并上线了，过了24小时之后查看 bugsnag 是否该问题还存在
 ```
 
-The model does the language understanding and calls the tool with structured arguments:
-`prompt` plus exactly one of `at` (ISO 8601 datetime), `delay` (`"24h"`, `"30m"`), or
-`every` (`"45m"`, `"1h"` for recurring), with optional `notify` and `global` flags.
-Tool-created tasks behave exactly like `/schedule add` tasks: same scoping, stickiness,
+- `create_schedule_task` — the model does the language understanding and calls the tool
+  with structured arguments: `prompt` plus exactly one of `at` (ISO 8601 datetime),
+  `delay` (`"24h"`, `"30m"`), or `every` (`"45m"`, `"1h"` for recurring), with optional
+  `notify` and `global` flags.
+- `list_schedule_tasks` — lists tasks in the current project (`all=true` for everything).
+- `cancel_schedule_task` — cancels a task by id; only tasks in the current project can
+  be cancelled.
+
+Tool-managed tasks behave exactly like `/schedule add` tasks: same scoping, stickiness,
 catch-up, and run log.
 
 ## Scopes
@@ -118,7 +123,8 @@ Tests (plain `node`, no build step — Node ≥ 22.6 strips types natively):
 npx tsc                                        # type check
 node scripts/test-schedule.ts                  # schedule parsing
 node scripts/test-add-args.ts                  # /schedule add arg splitting
-node scripts/test-tool-schedule.ts             # schedule tool params
+node scripts/test-tool-schedule.ts             # create_schedule_task schedule params
+node scripts/test-tool-scope.ts                # list/cancel scope policy
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts          # store concurrency
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine.ts         # engine, two sessions
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine-timers.ts  # real-timer firing

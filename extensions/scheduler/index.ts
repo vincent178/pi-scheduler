@@ -156,9 +156,19 @@ export default function (pi: ExtensionAPI) {
     engine = null;
   });
 
+  type ToolDetails = { task?: ScheduledTask; tasks?: ScheduledTask[]; error?: string };
+  const toolFail = (message: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${message}` }],
+    details: { error: message } as ToolDetails,
+  });
+  const toolOk = (text: string, details: ToolDetails) => ({
+    content: [{ type: "text" as const, text }],
+    details,
+  });
+
   pi.registerTool({
-    name: "schedule",
-    label: "Schedule Task",
+    name: "create_schedule_task",
+    label: "Create Scheduled Task",
     description: [
       "Schedule a task for later: at fire time the prompt is injected as a user message for the agent to execute (with notify=true it is only a passive reminder).",
       "Use this whenever the user asks to do, check, or be reminded of something at a future time, after a delay, or repeatedly — in any language.",
@@ -180,33 +190,67 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_toolCallId, params) {
-      type Details = { task?: ScheduledTask; error?: string };
-      const fail = (message: string) => ({
-        content: [{ type: "text" as const, text: `Error: ${message}` }],
-        details: { error: message } as Details,
-      });
-      if (!engine) return fail("task engine not running (no active session)");
-      if (!params.prompt.trim()) return fail("prompt must not be empty");
+      if (!engine) return toolFail("task engine not running (no active session)");
+      if (!params.prompt.trim()) return toolFail("prompt must not be empty");
       let schedule: Schedule;
       try {
         schedule = resolveTaskSchedule(params);
       } catch (err) {
-        return fail((err as Error).message);
+        return toolFail((err as Error).message);
       }
       const task = createTask(params.prompt, schedule, {
         notify: params.notify ?? false,
         global: params.global ?? false,
         via: "tool",
       });
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Scheduled ${task.id}: fires ${relTime(task.next_fire_at)} (${scheduleDesc(schedule)}, ${task.delivery}, ${task.scope}) — "${task.prompt}"`,
-          },
-        ],
-        details: { task } as Details,
-      };
+      return toolOk(
+        `Scheduled ${task.id}: fires ${relTime(task.next_fire_at)} (${scheduleDesc(schedule)}, ${task.delivery}, ${task.scope}) — "${task.prompt}"`,
+        { task },
+      );
+    },
+  });
+
+  pi.registerTool({
+    name: "list_schedule_tasks",
+    label: "List Scheduled Tasks",
+    description:
+      "List scheduled tasks with their id, fire time, delivery, scope, and prompt. Defaults to tasks in the current project; set all=true to include every project.",
+    parameters: Type.Object({
+      all: Type.Optional(Type.Boolean({ description: "Include tasks from other projects (default false)" })),
+    }),
+    async execute(_toolCallId, params) {
+      const store = readStore();
+      const tasks = store.tasks
+        .filter((r) => params.all || inScope(r, sessionCwd))
+        .sort((a, b) => Date.parse(a.next_fire_at) - Date.parse(b.next_fire_at));
+      if (tasks.length === 0) {
+        return toolOk(params.all ? "No scheduled tasks." : "No scheduled tasks in this project.", { tasks: [] });
+      }
+      return toolOk(tasks.map((r) => formatScheduledTask(r, sessionId, store)).join("\n"), { tasks });
+    },
+  });
+
+  pi.registerTool({
+    name: "cancel_schedule_task",
+    label: "Cancel Scheduled Task",
+    description:
+      "Cancel a scheduled task by id (get ids from list_schedule_tasks). Only tasks in the current project can be cancelled.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Task id, e.g. t-abc123-def456" }),
+    }),
+    async execute(_toolCallId, params) {
+      const task = readStore().tasks.find((x) => x.id === params.id);
+      if (!task) return toolFail(`no task ${params.id}`);
+      if (!inScope(task, sessionCwd)) {
+        return toolFail(`task ${params.id} belongs to another project; cancel it from there or with /schedule remove`);
+      }
+      updateStore((data) => {
+        data.tasks = data.tasks.filter((x) => x.id !== params.id);
+        return { result: null };
+      });
+      logEvent("cancelled", { id: params.id, session: sessionId, via: "tool" });
+      engine?.sweep();
+      return toolOk(`Cancelled ${params.id} — "${task.prompt}"`, { task });
     },
   });
 
