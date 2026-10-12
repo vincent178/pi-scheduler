@@ -23,7 +23,7 @@ export interface EngineHost {
   onIdle(cb: () => void): () => void;
 }
 
-export type ClaimResult = "claimed" | "held" | "not_due" | "gone" | "pending_pick";
+export type ClaimResult = "claimed" | "held" | "not_due" | "gone";
 
 const HEARTBEAT_MS = 30_000;
 const SWEEP_MS = 60_000;
@@ -125,13 +125,13 @@ export class Engine {
   fireNow(id: string): boolean {
     this.pendingPick.delete(id);
     let task: ScheduledTask | null = null;
-    const result = updateStore((data) => {
+    const found = updateStore((data) => {
       const r = data.tasks.find((x) => x.id === id);
-      if (!r || !r.enabled) return { result: "gone" as ClaimResult };
+      if (!r || !r.enabled) return { result: false };
       task = this.claim(data, r, true);
-      return { result: r.sticky_session_id === this.host.sessionId ? ("claimed" as ClaimResult) : ("gone" as ClaimResult) };
+      return { result: true };
     });
-    if (result === "gone" || !task) return false;
+    if (!found || !task) return false;
     this.deliver(task);
     this.armTimers();
     return true;
