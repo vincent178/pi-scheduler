@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { Engine } from "./engine.ts";
-import { parseSchedule, initialNextFire } from "./schedule.ts";
+import { parseSchedule, initialNextFire, resolveTaskSchedule } from "./schedule.ts";
 import {
   updateStore,
   readStore,
@@ -81,6 +82,38 @@ export function parseAddArgs(raw: string): AddArgs {
 export default function (pi: ExtensionAPI) {
   let engine: Engine | null = null;
   let sessionId = "";
+  let sessionCwd = "";
+
+  function createTask(
+    prompt: string,
+    schedule: Schedule,
+    opts: { notify: boolean; global: boolean; via: "command" | "tool" },
+  ): ScheduledTask {
+    const task: ScheduledTask = {
+      id: newTaskId(),
+      prompt,
+      schedule,
+      delivery: opts.notify ? "notify" : "prompt",
+      scope: opts.global ? "global" : "project",
+      project_root: opts.global ? null : resolveProjectRoot(sessionCwd),
+      sticky_session_id: sessionId,
+      next_fire_at: initialNextFire(schedule),
+    };
+    updateStore((data) => {
+      data.tasks.push(task);
+      return { result: null };
+    });
+    logEvent("created", {
+      id: task.id,
+      session: sessionId,
+      schedule: scheduleDesc(schedule),
+      delivery: task.delivery,
+      scope: task.scope,
+      via: opts.via,
+    });
+    engine?.sweep();
+    return task;
+  }
 
   async function pickOverdue(overdue: ScheduledTask[], ctx: ExtensionContext): Promise<void> {
     if (!ctx.hasUI) {
@@ -104,6 +137,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     sessionId = ctx.sessionManager.getSessionId();
+    sessionCwd = ctx.cwd;
     engine = new Engine({
       sessionId,
       cwd: ctx.cwd,
@@ -120,6 +154,60 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", () => {
     engine?.shutdown();
     engine = null;
+  });
+
+  pi.registerTool({
+    name: "schedule_task",
+    label: "Schedule Task",
+    description: [
+      "Schedule a task for later: at fire time the prompt is injected as a user message for the agent to execute (with notify=true it is only a passive reminder).",
+      "Use this whenever the user asks to do, check, or be reminded of something at a future time, after a delay, or repeatedly — in any language.",
+      "Provide exactly one of at/delay/every: at = absolute ISO 8601 datetime in local time (derive it from the current date/time in the system prompt); delay = relative offset like \"24h\", \"30m\", \"2 days\"; every = recurring interval like \"45m\", \"1h\".",
+      "Tasks fire only while a pi session is running, and only in the project where they were scheduled unless global=true.",
+    ].join(" "),
+    parameters: Type.Object({
+      prompt: Type.String({
+        description: "Self-contained instruction for the agent to execute when the task fires",
+      }),
+      at: Type.Optional(Type.String({ description: "Absolute fire time, ISO 8601 (one-shot)" })),
+      delay: Type.Optional(Type.String({ description: 'Fire after this delay, e.g. "24h", "30m" (one-shot)' })),
+      every: Type.Optional(Type.String({ description: 'Recurring interval, e.g. "45m", "1h"' })),
+      notify: Type.Optional(
+        Type.Boolean({ description: "Passive notification instead of an agent-executed prompt (default false)" }),
+      ),
+      global: Type.Optional(
+        Type.Boolean({ description: "Fire in any project instead of only the current one (default false)" }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      type Details = { task?: ScheduledTask; error?: string };
+      const fail = (message: string) => ({
+        content: [{ type: "text" as const, text: `Error: ${message}` }],
+        details: { error: message } as Details,
+      });
+      if (!engine) return fail("task engine not running (no active session)");
+      if (!params.prompt.trim()) return fail("prompt must not be empty");
+      let schedule: Schedule;
+      try {
+        schedule = resolveTaskSchedule(params);
+      } catch (err) {
+        return fail((err as Error).message);
+      }
+      const task = createTask(params.prompt, schedule, {
+        notify: params.notify ?? false,
+        global: params.global ?? false,
+        via: "tool",
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Scheduled ${task.id}: fires ${relTime(task.next_fire_at)} (${scheduleDesc(schedule)}, ${task.delivery}, ${task.scope}) — "${task.prompt}"`,
+          },
+        ],
+        details: { task } as Details,
+      };
+    },
   });
 
   pi.registerCommand("schedule", {
@@ -147,28 +235,7 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.notify("missing task text", "error");
             return;
           }
-          const task: ScheduledTask = {
-            id: newTaskId(),
-            prompt: parsed.prompt,
-            schedule,
-            delivery: parsed.notify ? "notify" : "prompt",
-            scope: parsed.global ? "global" : "project",
-            project_root: parsed.global ? null : resolveProjectRoot(ctx.cwd),
-            sticky_session_id: sessionId,
-            next_fire_at: initialNextFire(schedule),
-          };
-          updateStore((data) => {
-            data.tasks.push(task);
-            return { result: null };
-          });
-          logEvent("created", {
-            id: task.id,
-            session: sessionId,
-            schedule: scheduleDesc(schedule),
-            delivery: task.delivery,
-            scope: task.scope,
-          });
-          engine.sweep();
+          const task = createTask(parsed.prompt, schedule, { ...parsed, via: "command" });
           ctx.ui.notify(
             `⏰ ${task.id} fires ${relTime(task.next_fire_at)} — "${task.prompt}" (${task.delivery}, ${task.scope})`,
             "info",

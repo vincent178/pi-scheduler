@@ -63,6 +63,29 @@ export function parseSchedule(input: string, now: Date = new Date()): Schedule {
   );
 }
 
+export interface TaskScheduleParams {
+  at?: string;
+  delay?: string;
+  every?: string;
+}
+
+// Structured counterpart to parseSchedule for the agent tool: the model has
+// already done the language understanding, so only one field is accepted.
+export function resolveTaskSchedule(params: TaskScheduleParams, now: Date = new Date()): Schedule {
+  const at = params.at?.trim();
+  const delay = params.delay?.trim().replace(/^in\s+/i, "");
+  const every = params.every?.trim().replace(/^every\s+/i, "");
+  const set = [at, delay, every].filter(Boolean).length;
+  if (set !== 1) throw new Error('exactly one of "at", "delay", or "every" is required');
+  if (at) {
+    const ms = Date.parse(at);
+    if (Number.isNaN(ms)) throw new Error(`invalid datetime: "${at}" (use ISO 8601)`);
+    if (ms <= now.getTime()) throw new Error(`"at" is in the past: "${at}"`);
+    return { type: "once", at: new Date(ms).toISOString() };
+  }
+  return parseSchedule(delay ? `in ${delay}` : `every ${every}`, now);
+}
+
 export function initialNextFire(schedule: Schedule, now: Date = new Date()): string {
   if (schedule.type === "once") return schedule.at;
   return new Date(now.getTime() + schedule.every_minutes * 60_000).toISOString();
