@@ -61,11 +61,14 @@ function throws(name: string, fn: () => unknown, match: string): void {
 
 throws("no field -> error", () => resolveTaskSchedule({}, now), "exactly one");
 throws("two fields -> error", () => resolveTaskSchedule({ delay: "1h", every: "1h" }, now), "exactly one");
-throws("blank field counts as unset", () => {
+{
   const s = resolveTaskSchedule({ at: "  ", delay: "1h" }, now);
-  if (s.type !== "once" || Date.parse(s.at) !== now.getTime() + 60 * M) throw new Error(`wrong result ${JSON.stringify(s)}`);
-  throw { message: "marker" } as never;
-}, "marker");
+  check(
+    "blank field counts as unset",
+    s.type === "once" && Date.parse(s.at) === now.getTime() + 60 * M,
+    JSON.stringify(s),
+  );
+}
 throws("garbage at -> error", () => resolveTaskSchedule({ at: "not-a-date" }, now), "invalid datetime");
 throws("past at -> error", () => resolveTaskSchedule({ at: new Date(now.getTime() - M).toISOString() }, now), "in the past");
 throws("garbage delay -> error", () => resolveTaskSchedule({ delay: "whenever" }, now), "could not parse schedule");

@@ -162,7 +162,7 @@ export default function (pi: ExtensionAPI) {
     description: [
       "Schedule a task for later: at fire time the prompt is injected as a user message for the agent to execute (with notify=true it is only a passive reminder).",
       "Use this whenever the user asks to do, check, or be reminded of something at a future time, after a delay, or repeatedly — in any language.",
-      "Provide exactly one of at/delay/every: at = absolute ISO 8601 datetime in local time (derive it from the current date/time in the system prompt); delay = relative offset like \"24h\", \"30m\", \"2 days\"; every = recurring interval like \"45m\", \"1h\".",
+      "Provide exactly one of at/delay/every: delay = relative offset like \"24h\", \"30m\", \"2 days\" — prefer it for relative times, it needs no clock; every = recurring interval like \"45m\", \"1h\"; at = absolute ISO 8601 datetime in local time — only for explicit wall-clock times, and run `date` first if you don't know the current local time.",
       "Tasks fire only while a pi session is running, and only in the project where they were scheduled unless global=true.",
     ].join(" "),
     parameters: Type.Object({
