@@ -1,12 +1,6 @@
 // Engine verification with two simulated sessions sharing one store.
 // Run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine.ts
-import {
-  readStore,
-  updateStore,
-  registerSession,
-  newTaskId,
-  type ScheduledTask,
-} from "../extensions/scheduler/store.ts";
+import { readStore, updateStore, touchSession, newTaskId, type ScheduledTask } from "../extensions/scheduler/store.ts";
 import { Engine, type EngineHost } from "../extensions/scheduler/engine.ts";
 
 let failures = 0;
@@ -65,9 +59,7 @@ function addScheduledTask(overrides: Partial<ScheduledTask>): ScheduledTask {
     scope: "project",
     project_root: "/proj",
     sticky_session_id: null,
-    created_at: new Date().toISOString(),
     next_fire_at: new Date(Date.now() - 1000).toISOString(), // already due
-    last_fired_at: null,
     ...overrides,
   };
   updateStore((data) => {
@@ -82,8 +74,8 @@ const hostB = mockHost("session-B", "/proj");
 
 // Presence: both sessions alive without starting full engines (no timers in tests).
 updateStore((data) => {
-  registerSession(data, "session-A", { pid: 111, cwd: "/proj", project_root: "/proj" });
-  registerSession(data, "session-B", { pid: 222, cwd: "/proj", project_root: "/proj" });
+  touchSession(data, "session-A");
+  touchSession(data, "session-B");
   return { result: null };
 });
 
@@ -115,7 +107,7 @@ check("owner A fires its own task", hostA.prompts.length === 2);
 // --- 4. stale owner -> ownership transfers to the next claimer ------------------
 updateStore((data) => {
   data.tasks[0].next_fire_at = new Date(Date.now() - 1000).toISOString();
-  data.sessions["session-A"].heartbeat_at = new Date(Date.now() - 10 * 60_000).toISOString();
+  data.sessions["session-A"] = new Date(Date.now() - 10 * 60_000).toISOString();
   return { result: null };
 });
 engineB.fireDue();
@@ -161,13 +153,13 @@ engineA.fireDue();
 engineB.fireDue();
 check("out-of-scope task never fires", !hostA.prompts.concat(hostB.prompts).some((p) => p.includes("foreign project")));
 store = readStore();
-check("out-of-scope task untouched", store.tasks.some((r) => r.id === r6.id && r.last_fired_at === null));
+check("out-of-scope task never claimed", store.tasks.some((r) => r.id === r6.id && r.sticky_session_id === null));
 
 // --- 10. overdue pick flow: pending tasks never auto-fire ----------------------
 const hostC = mockHost("session-C", "/proj");
 const engineC = new Engine(hostC);
 updateStore((data) => {
-  registerSession(data, "session-C", { pid: 333, cwd: "/proj", project_root: "/proj" });
+  touchSession(data, "session-C");
   return { result: null };
 });
 const r7 = addScheduledTask({ prompt: "overdue pick me", next_fire_at: new Date(Date.now() - 3_600_000).toISOString() });

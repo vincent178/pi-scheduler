@@ -76,11 +76,3 @@ export function advanceNextFire(schedule: Schedule, now: Date = new Date()): str
   let next = now.getTime() + stepMs;
   return new Date(next).toISOString();
 }
-
-export function missedIntervals(schedule: Schedule, nextFireAt: string, now: Date = new Date()): number {
-  if (schedule.type !== "interval") return Date.parse(nextFireAt) <= now.getTime() ? 1 : 0;
-  const stepMs = schedule.every_minutes * 60_000;
-  const overdue = now.getTime() - Date.parse(nextFireAt);
-  if (overdue < 0) return 0;
-  return Math.floor(overdue / stepMs) + 1;
-}

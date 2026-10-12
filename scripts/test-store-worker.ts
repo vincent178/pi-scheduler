@@ -1,12 +1,5 @@
 // Worker: performs store mutations against PI_SCHEDULER_DIR. Invoked by test-store.ts.
-import {
-  updateStore,
-  registerSession,
-  heartbeat,
-  deregisterSession,
-  newTaskId,
-  logEvent,
-} from "../extensions/scheduler/store.ts";
+import { updateStore, touchSession, deregisterSession, newTaskId, logEvent } from "../extensions/scheduler/store.ts";
 
 const sessionId = process.argv[2];
 const iterations = Number(process.argv[3]);
@@ -17,7 +10,7 @@ if (!sessionId || !iterations) {
 }
 
 updateStore((data) => {
-  registerSession(data, sessionId, { pid: process.pid, cwd: "/tmp", project_root: "/tmp" });
+  touchSession(data, sessionId);
   return { result: null };
 });
 
@@ -26,7 +19,7 @@ for (let i = 0; i < iterations; i++) {
     const counters = (data as unknown as { counters?: Record<string, number> });
     counters.counters ??= {};
     counters.counters.total = (counters.counters.total ?? 0) + 1;
-    heartbeat(data, sessionId);
+    touchSession(data, sessionId);
     return { result: null };
   });
   if (i % 5 === 0) {
@@ -40,9 +33,7 @@ for (let i = 0; i < iterations; i++) {
         scope: "project",
         project_root: "/tmp",
         sticky_session_id: sessionId,
-        created_at: new Date().toISOString(),
         next_fire_at: new Date().toISOString(),
-        last_fired_at: null,
       });
       return { result: null };
     });

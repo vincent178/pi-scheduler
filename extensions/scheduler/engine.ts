@@ -1,8 +1,8 @@
 import {
   updateStore,
+  readStore,
   isSessionAlive,
-  registerSession,
-  heartbeat,
+  touchSession,
   deregisterSession,
   logEvent,
   SESSION_STALE_MS,
@@ -22,8 +22,6 @@ export interface EngineHost {
   /** Subscribe to agent-settled; returns an unsubscribe function. */
   onIdle(cb: () => void): () => void;
 }
-
-export type ClaimResult = "claimed" | "held" | "not_due" | "gone";
 
 const HEARTBEAT_MS = 30_000;
 const SWEEP_MS = 60_000;
@@ -57,7 +55,7 @@ export class Engine {
   start(): ScheduledTask[] {
     const { sessionId, cwd, projectRoot } = this.host;
     updateStore((data) => {
-      registerSession(data, sessionId, { pid: process.pid, cwd, project_root: projectRoot });
+      touchSession(data, sessionId);
       return { result: null };
     });
     logEvent("session_registered", { session: sessionId, cwd, project_root: projectRoot });
@@ -68,7 +66,7 @@ export class Engine {
     this.heartbeatTimer = setInterval(() => {
       try {
         updateStore((data) => {
-          heartbeat(data, sessionId);
+          touchSession(data, sessionId);
           return { result: null };
         });
       } catch (err) {
@@ -106,10 +104,9 @@ export class Engine {
   }
 
   collectOverdue(now: Date = new Date()): ScheduledTask[] {
-    const data = updateStore((d) => ({ result: d }));
+    const data = readStore();
     const overdue = data.tasks.filter(
       (r) =>
-        
         inScope(r, this.host.cwd) &&
         Date.parse(r.next_fire_at) <= now.getTime() &&
         this.claimableByMe(data, r),
@@ -161,8 +158,8 @@ export class Engine {
 
   private pruneSessions(data: StoreData): void {
     const now = Date.now();
-    for (const [id, s] of Object.entries(data.sessions)) {
-      if (id !== this.host.sessionId && now - Date.parse(s.heartbeat_at) > SESSION_PRUNE_MS) {
+    for (const [id, hb] of Object.entries(data.sessions)) {
+      if (id !== this.host.sessionId && now - Date.parse(hb) > SESSION_PRUNE_MS) {
         delete data.sessions[id];
         logEvent("session_pruned", { session: id });
       }
@@ -170,7 +167,7 @@ export class Engine {
   }
 
   fireDue(data?: StoreData): void {
-    const store = data ?? updateStore((d) => ({ result: d }));
+    const store = data ?? readStore();
     const now = Date.now();
     for (const r of store.tasks) {
       if (this.stopped) return;
@@ -186,13 +183,13 @@ export class Engine {
       }
       const claimed = updateStore((d) => {
         const fresh = d.tasks.find((x) => x.id === r.id);
-        if (!fresh) return { result: "gone" as ClaimResult };
-        if (Date.parse(fresh.next_fire_at) > Date.now()) return { result: "not_due" as ClaimResult };
-        if (!this.claimableByMe(d, fresh)) return { result: "held" as ClaimResult };
+        if (!fresh) return { result: false };
+        if (Date.parse(fresh.next_fire_at) > Date.now()) return { result: false };
+        if (!this.claimableByMe(d, fresh)) return { result: false };
         this.claim(d, fresh, false);
-        return { result: (fresh.sticky_session_id === this.host.sessionId ? "claimed" : "gone") as ClaimResult };
+        return { result: true };
       });
-      if (claimed === "claimed") this.deliver(r);
+      if (claimed) this.deliver(r);
     }
   }
 
@@ -207,7 +204,6 @@ export class Engine {
     const now = new Date();
 
     r.sticky_session_id = this.host.sessionId;
-    r.last_fired_at = now.toISOString();
     if (r.schedule.type === "once") {
       data.tasks = data.tasks.filter((x) => x.id !== r.id);
     } else {
@@ -228,7 +224,7 @@ export class Engine {
   }
 
   private armTimers(data?: StoreData): void {
-    const store = data ?? updateStore((d) => ({ result: d }));
+    const store = data ?? readStore();
     const live = new Set(store.tasks.map((r) => r.id));
     for (const [id, t] of this.timers) {
       if (!live.has(id)) {
@@ -282,7 +278,7 @@ export class Engine {
   }
 
   private emitDigest(): void {
-    const data = updateStore((d) => ({ result: d }));
+    const data = readStore();
     const byProject = new Map<string, number>();
     for (const r of data.tasks) {
       if (inScope(r, this.host.cwd)) continue;

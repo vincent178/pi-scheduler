@@ -1,10 +1,5 @@
 // Schedule parsing verification. Run: node scripts/test-schedule.ts
-import {
-  parseSchedule,
-  initialNextFire,
-  advanceNextFire,
-  missedIntervals,
-} from "../extensions/scheduler/schedule.ts";
+import { parseSchedule, initialNextFire, advanceNextFire } from "../extensions/scheduler/schedule.ts";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -120,20 +115,6 @@ check("advanceNextFire(once) -> null (caller deletes)", advanceNextFire({ type: 
 
 const next = advanceNextFire(interval, now);
 check("advanceNextFire(interval) = now + 45m", next !== null && Date.parse(next) === now.getTime() + 45 * M);
-
-// missed intervals: next_fire_at 4.5 intervals in the past -> 5 missed
-const missedFrom = new Date(now.getTime() - 4.5 * 45 * M).toISOString();
-check(
-  "missedIntervals coalesces 5 missed slots",
-  missedIntervals(interval, missedFrom, now) === 5,
-  `got ${missedIntervals(interval, missedFrom, now)}`,
-);
-check("missedIntervals -> 0 when not due", missedIntervals(interval, first, now) === 0);
-const onceAt2 = new Date(now.getTime() - M).toISOString();
-check(
-  "missedIntervals(once) -> 1 when overdue",
-  missedIntervals({ type: "once", at: onceAt2 }, onceAt2, now) === 1,
-);
 
 console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

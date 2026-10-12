@@ -155,9 +155,7 @@ export default function (pi: ExtensionAPI) {
             scope: parsed.global ? "global" : "project",
             project_root: parsed.global ? null : resolveProjectRoot(ctx.cwd),
             sticky_session_id: sessionId,
-            created_at: new Date().toISOString(),
             next_fire_at: initialNextFire(schedule),
-            last_fired_at: null,
           };
           updateStore((data) => {
             data.tasks.push(task);

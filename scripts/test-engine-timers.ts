@@ -33,9 +33,7 @@ updateStore((data) => {
     scope: "project",
     project_root: "/proj",
     sticky_session_id: "timer-test",
-    created_at: new Date().toISOString(),
     next_fire_at: new Date(Date.now() + 3000).toISOString(),
-    last_fired_at: null,
   });
   return { result: null };
 });

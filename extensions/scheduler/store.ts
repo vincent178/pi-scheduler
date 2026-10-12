@@ -26,22 +26,13 @@ export interface ScheduledTask {
   scope: Scope;
   project_root: string | null;
   sticky_session_id: string | null;
-  created_at: string;
   next_fire_at: string;
-  last_fired_at: string | null;
-}
-
-export interface SessionPresence {
-  pid: number;
-  cwd: string;
-  project_root: string;
-  heartbeat_at: string;
 }
 
 export interface StoreData {
-  version: 1;
   tasks: ScheduledTask[];
-  sessions: Record<string, SessionPresence>;
+  /** sessionId -> last heartbeat ISO timestamp */
+  sessions: Record<string, string>;
 }
 
 export interface LogEvent {
@@ -70,7 +61,7 @@ function ensureDir(): void {
 // concurrent update is tolerated. Corrupt files are quarantined on read.
 
 function emptyStore(): StoreData {
-  return { version: 1, tasks: [], sessions: {} };
+  return { tasks: [], sessions: {} };
 }
 
 export function readStore(): StoreData {
@@ -86,7 +77,6 @@ export function readStore(): StoreData {
     const parsed = JSON.parse(raw) as Partial<StoreData>;
     return {
       ...parsed,
-      version: 1,
       tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
       sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
     };
@@ -114,22 +104,14 @@ export function updateStore<T>(fn: (data: StoreData) => { data?: StoreData; resu
 export const SESSION_STALE_MS = 90_000;
 
 export function isSessionAlive(data: StoreData, sessionId: string, now = Date.now()): boolean {
-  const s = data.sessions[sessionId];
-  if (!s) return false;
-  return now - Date.parse(s.heartbeat_at) < SESSION_STALE_MS;
+  const hb = data.sessions[sessionId];
+  if (!hb) return false;
+  return now - Date.parse(hb) < SESSION_STALE_MS;
 }
 
-export function registerSession(
-  data: StoreData,
-  sessionId: string,
-  presence: Omit<SessionPresence, "heartbeat_at">,
-): void {
-  data.sessions[sessionId] = { ...presence, heartbeat_at: new Date().toISOString() };
-}
-
-export function heartbeat(data: StoreData, sessionId: string): void {
-  const s = data.sessions[sessionId];
-  if (s) s.heartbeat_at = new Date().toISOString();
+/** Register a session or refresh its heartbeat. */
+export function touchSession(data: StoreData, sessionId: string): void {
+  data.sessions[sessionId] = new Date().toISOString();
 }
 
 /** Also releases the session's sticky claims; returns the released task ids. */
