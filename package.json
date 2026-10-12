@@ -1,12 +1,12 @@
 {
-  "name": "pi-reminder",
+  "name": "pi-scheduler",
   "version": "0.1.0",
-  "description": "Time-based reminders for pi: prompt or notify delivery, project/global scoping, session stickiness, missed-reminder catch-up",
+  "description": "Scheduled tasks for pi: schedule a prompt at time A, the agent executes it at time B. Project/global scoping, session stickiness, missed-task catch-up",
   "keywords": ["pi-package"],
   "license": "MIT",
   "type": "module",
   "pi": {
-    "extensions": ["./extensions/reminder/index.ts"]
+    "extensions": ["./extensions/scheduler/index.ts"]
   },
   "dependencies": {
     "chrono-node": "^2.7.0"
