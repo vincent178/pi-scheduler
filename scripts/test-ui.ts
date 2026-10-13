@@ -23,6 +23,9 @@ if (!process.env.PI_SCHEDULER_DIR) {
   process.exit(2);
 }
 
+// Input renders its first placeholder char wrapped in a fake-cursor ANSI sequence.
+const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;;\x07/g, "");
+
 const theme = {
   fg: (_color: string, s: string) => s,
   bg: (_color: string, s: string) => s,
@@ -74,30 +77,36 @@ updateStore((d) => {
   };
   let closed = false;
   const c = new TaskListComponent(host, tui, theme, () => (closed = true));
+  c.focused = true;
 
   const out = c.render(100).join("\n");
   check("list renders both tasks", out.includes("t-early") && out.includes("t-late"));
-  check("list renders prompt one-lined", out.includes("prompt for t-early second line"));
+  check("list renders prompt in description", out.includes("prompt for t-early second line"));
   check("list renders footer hints", out.includes("enter fire"));
   check("list renders scope label", out.includes("this project"));
+  check("list renders filter input", stripAnsi(out).includes("filter tasks"));
 
   c.handleInput("\x1b[B"); // down
   c.handleInput("\r"); // enter = fire selected (t-late)
   check("enter fires selected task", fired[0] === "t-late", fired.join(","));
 
-  c.handleInput("d");
-  c.handleInput("n"); // decline
-  check("delete declined keeps task", removed.length === 0 && readStore().tasks.length === 2);
-  c.handleInput("d");
-  c.handleInput("y"); // confirm
-  check("delete confirmed removes task", removed[0] === "t-late" && readStore().tasks.length === 1);
+  c.handleInput("\x04"); // ctrl+d arms delete
+  check("ctrl+d arms delete confirm", c.render(100).join("\n").includes("ctrl+d again to delete"));
+  c.handleInput("x"); // typing disarms and goes to filter
+  check("typing disarms delete", !c.render(100).join("\n").includes("ctrl+d again to delete"));
+  c.handleInput(""); // backspace clears filter
+  c.handleInput("\x04");
+  c.handleInput("\x04"); // second ctrl+d confirms
+  check("ctrl+d twice deletes task", removed.length === 1 && readStore().tasks.length === 1, removed.join(","));
 
-  c.handleInput("a");
-  check("a toggles scope", c.render(100).join("\n").includes("all projects"));
+  c.handleInput("\x01"); // ctrl+a toggles scope
+  check("ctrl+a toggles scope", c.render(100).join("\n").includes("all projects"));
+
+  c.handleInput("late"); // filter text
+  check("filter narrows list", !c.render(100).join("\n").includes("t-early"));
 
   c.handleInput("\x1b"); // escape closes
-  check("escape closes overlay", closed);
-  c.dispose();
+  check("escape closes panel", closed);
 }
 
 // --- OverduePickComponent ---
@@ -122,7 +131,7 @@ updateStore((d) => {
 // --- widgetLines ---
 {
   const lines = widgetLines(theme, CWD);
-  check("widget shows next task", lines !== undefined && lines[0].includes("t-early"), lines?.[0]);
+  check("widget shows next task", lines !== undefined && lines[0].includes("t-late"), lines?.[0]);
   updateStore((d) => ({ result: (d.tasks = []) && null }));
   check("widget hides with no tasks", widgetLines(theme, CWD) === undefined);
 }

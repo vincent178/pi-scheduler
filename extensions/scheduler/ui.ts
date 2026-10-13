@@ -1,9 +1,12 @@
 import {
+  Input,
   matchesKey,
+  SelectList,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
   type Component,
+  type SelectItem,
   type TUI,
 } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -74,7 +77,35 @@ function headerLine(title: string, right: string, width: number, theme: Theme): 
   return truncateToWidth(left + theme.fg("borderMuted", "─".repeat(fill)) + rightText, width);
 }
 
-/** Interactive task manager shown by /schedule list in TUI mode. */
+function rule(width: number, theme: Theme): string {
+  return theme.fg("accent", "─".repeat(width));
+}
+
+function selectTheme(theme: Theme) {
+  return {
+    selectedPrefix: (text: string) => theme.fg("accent", text),
+    selectedText: (text: string) => theme.fg("accent", text),
+    description: (text: string) => theme.fg("muted", text),
+    scrollInfo: (text: string) => theme.fg("dim", text),
+    noMatch: (text: string) => theme.fg("warning", text),
+  };
+}
+
+function taskSelectItem(r: ScheduledTask, mySession: string, store: StoreData): SelectItem {
+  const glyph = r.schedule.type === "interval" ? "🔁" : "⏰";
+  const owner =
+    !r.sticky_session_id ? "unowned" : r.sticky_session_id === mySession ? "this session" : "other session";
+  return {
+    value: r.id,
+    label: `${glyph} ${relTime(r.next_fire_at)} · ${r.id}`,
+    description: `${oneLine(r.prompt)} — ${r.delivery} · ${scopeLabel(r)} · ${owner}`,
+  };
+}
+
+/**
+ * Interactive task manager shown by /schedule list in TUI mode. Inline panel in
+ * the style of pi's selectors: filter input, searchable list, ctrl-key actions.
+ */
 export class TaskListComponent implements Component {
   private readonly host: TaskHost;
   private readonly tui: TUI;
@@ -83,12 +114,21 @@ export class TaskListComponent implements Component {
   private showAll: boolean;
   private store: StoreData = { tasks: [], sessions: {} };
   private tasks: ScheduledTask[] = [];
-  private selected = 0;
+  private readonly input: Input;
+  private list: SelectList;
   private preview = false;
   private pendingDelete: string | null = null;
-  private readonly tick: NodeJS.Timeout;
-  private cacheWidth = -1;
-  private cacheLines: string[] | null = null;
+  private _focused = false;
+
+  // The TUI focuses this component; the inner Input needs the state for its
+  // cursor/placeholder and correct IME positioning.
+  get focused(): boolean {
+    return this._focused;
+  }
+  set focused(value: boolean) {
+    this._focused = value;
+    this.input.focused = value;
+  }
 
   constructor(host: TaskHost, tui: TUI, theme: Theme, done: () => void, showAll = false) {
     this.host = host;
@@ -96,36 +136,54 @@ export class TaskListComponent implements Component {
     this.theme = theme;
     this.done = done;
     this.showAll = showAll;
+    this.input = new Input({
+      prompt: "> ",
+      placeholder: "filter tasks…",
+      placeholderStyle: (s) => theme.fg("dim", s),
+    });
     this.refresh();
-    // Re-read the store so countdowns advance and cross-session edits appear.
-    this.tick = setInterval(() => {
-      this.refresh();
-      this.invalidate();
-      this.tui.requestRender();
-    }, 1000);
-    this.tick.unref();
-  }
-
-  dispose(): void {
-    clearInterval(this.tick);
+    this.list = this.buildList();
   }
 
   invalidate(): void {
-    this.cacheWidth = -1;
-    this.cacheLines = null;
+    this.input.invalidate();
+    this.list.invalidate();
   }
 
   private refresh(): void {
     this.store = readStore();
     this.tasks = scopedTasks(this.showAll, this.host.cwd, this.store);
-    this.selected = Math.min(this.selected, Math.max(0, this.tasks.length - 1));
     if (this.pendingDelete && !this.tasks.some((t) => t.id === this.pendingDelete)) {
       this.pendingDelete = null;
     }
   }
 
+  // SelectList items are fixed at construction; rebuild on store mutations,
+  // preserving the filter text and selected task.
+  private buildList(selectedId?: string): SelectList {
+    const items = this.tasks.map((r) => taskSelectItem(r, this.host.sessionId, this.store));
+    const list = new SelectList(items, Math.min(Math.max(items.length, 1), MAX_VISIBLE_TASKS), selectTheme(this.theme));
+    list.setFilter(this.input.getValue());
+    if (selectedId) {
+      const idx = items.findIndex((i) => i.value === selectedId);
+      if (idx >= 0) list.setSelectedIndex(idx);
+    }
+    list.onSelect = (item) => {
+      this.host.fire(item.value);
+      this.refresh();
+      this.list = this.buildList();
+      this.tui.requestRender();
+    };
+    list.onCancel = () => this.done();
+    return list;
+  }
+
+  private selectedTask(): ScheduledTask | undefined {
+    const item = this.list.getSelectedItem();
+    return this.tasks.find((t) => t.id === item?.value);
+  }
+
   handleInput(data: string): void {
-    const task = this.tasks[this.selected];
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
       if (this.pendingDelete) this.pendingDelete = null;
       else if (this.preview) this.preview = false;
@@ -133,82 +191,78 @@ export class TaskListComponent implements Component {
         this.done();
         return;
       }
-    } else if (this.pendingDelete) {
-      if (data === "y") {
-        this.host.remove(this.pendingDelete);
-        this.pendingDelete = null;
-        this.refresh();
-      } else if (data === "n" || data === "d") {
-        this.pendingDelete = null;
+    } else if (matchesKey(data, "ctrl+d")) {
+      const task = this.selectedTask();
+      if (task) {
+        if (this.pendingDelete === task.id) {
+          this.host.remove(task.id);
+          this.pendingDelete = null;
+          this.refresh();
+          this.list = this.buildList();
+        } else {
+          this.pendingDelete = task.id;
+        }
       }
-    } else if (matchesKey(data, "up") || matchesKey(data, "ctrl+p")) {
-      this.selected = Math.max(0, this.selected - 1);
-    } else if (matchesKey(data, "down") || matchesKey(data, "ctrl+n")) {
-      this.selected = Math.min(this.tasks.length - 1, this.selected + 1);
-    } else if (data === "a") {
+    } else if (matchesKey(data, "ctrl+a")) {
       this.showAll = !this.showAll;
       this.refresh();
-    } else if (data === "p" && task) {
-      this.preview = !this.preview;
-    } else if (data === "d" && task) {
-      this.pendingDelete = task.id;
-    } else if ((matchesKey(data, "enter") || data === "f") && task) {
-      this.host.fire(task.id);
-      this.refresh();
+      this.list = this.buildList();
+    } else if (matchesKey(data, "ctrl+o")) {
+      if (this.selectedTask()) this.preview = !this.preview;
+    } else if (
+      matchesKey(data, "up") ||
+      matchesKey(data, "down") ||
+      matchesKey(data, "pageUp") ||
+      matchesKey(data, "pageDown") ||
+      matchesKey(data, "enter") ||
+      matchesKey(data, "tab")
+    ) {
+      this.pendingDelete = null;
+      this.list.handleInput(data);
+    } else {
+      this.pendingDelete = null;
+      this.input.handleInput(data);
+      this.list.setFilter(this.input.getValue());
     }
-    this.invalidate();
     this.tui.requestRender();
   }
 
   render(width: number): string[] {
-    if (this.cacheLines && this.cacheWidth === width) return this.cacheLines;
     const th = this.theme;
     const scope = this.showAll ? "all projects" : "this project";
     const lines: string[] = [""];
-    lines.push(headerLine(" Scheduled Tasks ", `${scope} · ${this.tasks.length} `, width, th));
+    lines.push(rule(width, th));
     lines.push("");
-
+    lines.push(truncateToWidth(` ${th.fg("accent", th.bold("Scheduled Tasks"))} ${th.fg("muted", `— ${scope} · ${this.tasks.length}`)}`, width));
+    lines.push("");
+    lines.push(...this.input.render(width));
+    lines.push("");
     if (this.tasks.length === 0) {
-      const hint = this.showAll ? "No scheduled tasks at all." : "No tasks in this project — press a to show all.";
-      lines.push(truncateToWidth(`  ${th.fg("dim", hint)}`, width));
+      const hint = this.showAll ? "No scheduled tasks at all." : "No tasks in this project — ctrl+a to show all.";
+      lines.push(truncateToWidth(`   ${th.fg("dim", hint)}`, width));
     } else {
-      const start = Math.max(
-        0,
-        Math.min(this.selected - Math.floor(MAX_VISIBLE_TASKS / 2), this.tasks.length - MAX_VISIBLE_TASKS),
-      );
-      const end = Math.min(this.tasks.length, start + MAX_VISIBLE_TASKS);
-      for (let i = start; i < end; i++) {
-        const t = this.tasks[i];
-        const isSelected = i === this.selected;
-        const cursor = isSelected ? th.fg("accent", "› ") : "  ";
-        const [meta, prompt] = taskRowLines(t, th, width - 2, this.host.sessionId, this.store);
-        lines.push(truncateToWidth(cursor + (isSelected ? th.bold(meta) : meta), width));
-        lines.push(prompt);
-        if (this.pendingDelete === t.id) {
-          lines.push(truncateToWidth(`      ${th.fg("error", `Delete ${t.id}? (y/n)`)}`, width));
+      lines.push(...this.list.render(width));
+      const task = this.selectedTask();
+      if (task && this.preview) {
+        lines.push("");
+        for (const w of wrapTextWithAnsi(task.prompt, Math.max(10, width - 6))) {
+          lines.push(truncateToWidth(`   ${th.fg("dim", "│")} ${w}`, width));
         }
-        if (isSelected && this.preview) {
-          for (const w of wrapTextWithAnsi(t.prompt, Math.max(10, width - 6))) {
-            lines.push(truncateToWidth(`    ${th.fg("dim", "│")} ${w}`, width));
-          }
-        }
-      }
-      if (this.tasks.length > MAX_VISIBLE_TASKS) {
-        lines.push(truncateToWidth(`  ${th.fg("dim", `(${this.selected + 1}/${this.tasks.length})`)}`, width));
       }
     }
-
     lines.push("");
-    lines.push(
-      truncateToWidth(
-        `  ${th.fg("dim", "↑↓ select · enter fire · d delete · p preview · a toggle scope · esc close")}`,
-        width,
-      ),
-    );
+    if (this.pendingDelete) {
+      lines.push(truncateToWidth(` ${th.fg("error", `ctrl+d again to delete ${this.pendingDelete} · esc to cancel`)}`, width));
+    } else {
+      lines.push(
+        truncateToWidth(
+          ` ${th.fg("dim", "↑↓ navigate · enter fire · ctrl+d delete · ctrl+o preview · ctrl+a all projects · esc close")}`,
+          width,
+        ),
+      );
+    }
     lines.push("");
-
-    this.cacheWidth = width;
-    this.cacheLines = lines;
+    lines.push(rule(width, th));
     return lines;
   }
 }

@@ -35,7 +35,7 @@ pi -e .
 /schedule add at 15:00 stretch break --notify
 /schedule add every 45 minutes poll CI --global
 /schedule add             # interactive wizard: when → prompt → delivery → scope
-/schedule list            # interactive overlay: fire/delete/preview tasks (falls back to text outside the TUI)
+/schedule list            # inline panel: filter, fire, delete, preview (text fallback outside the TUI)
 /schedule list --all      # include every project
 /schedule remove [id]     # pick from a list when id omitted
 /schedule fire [id]       # fire now; this session becomes the owner

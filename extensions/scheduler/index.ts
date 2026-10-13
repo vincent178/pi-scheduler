@@ -204,7 +204,6 @@ export default function (pi: ExtensionAPI) {
     if (ctx.mode === "tui") {
       const fireIds = await ctx.ui.custom<string[]>(
         (_tui, theme, _kb, done) => new OverduePickComponent(overdue, theme, (ids) => done(ids)),
-        { overlay: true, overlayOptions: { width: "100%", maxHeight: "80%" } },
       );
       for (const r of overdue) {
         if (fireIds.includes(r.id) && engine) engine.fireNow(r.id);
@@ -429,7 +428,6 @@ export default function (pi: ExtensionAPI) {
           if (ctx.mode === "tui") {
             await ctx.ui.custom<void>(
               (tui, theme, _kb, done) => new TaskListComponent(taskHost(ctx), tui, theme, () => done(), all),
-              { overlay: true, overlayOptions: { width: "100%", maxHeight: "80%" } },
             );
             return;
           }
