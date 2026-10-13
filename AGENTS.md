@@ -7,7 +7,9 @@ time B. A notify-only task is just a reminder. See README.md for the full design
 
 - `extensions/scheduler/` — the extension (`index.ts` wiring + `/schedule` command,
   `engine.ts` timers/stickiness/delivery, `store.ts` persistence + run log,
-  `schedule.ts` natural-language parsing, `project.ts` project scoping)
+  `schedule.ts` natural-language parsing, `project.ts` project scoping,
+  `format.ts` pi-free text formatting, `ui.ts` TUI components: task-list overlay,
+  overdue picker, editor widget)
 - `scripts/` — verification scripts, not a test framework
 
 ## Code style
@@ -20,8 +22,9 @@ time B. A notify-only task is just a reminder. See README.md for the full design
 - Erasable TypeScript only (no enums, no parameter properties): Node ≥ 22.6 runs the
   files directly via type stripping, and tests import the extension source with explicit
   `.ts` extensions.
-- Keep the engine pi-free: `engine.ts`, `store.ts`, `schedule.ts`, `project.ts` must not
-  import pi packages; `index.ts` is the only file that touches `ExtensionAPI`.
+- Keep the engine pi-free: `engine.ts`, `store.ts`, `schedule.ts`, `project.ts`,
+  `format.ts` must not import pi packages; `index.ts` is the only file that touches
+  `ExtensionAPI` (`ui.ts` may import `@earendil-works/pi-tui` components and types).
 
 ## Verification
 
@@ -34,6 +37,7 @@ node scripts/test-add-args.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine-timers.ts
+PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-ui.ts
 ```
 
 Store/engine tests must use a fresh `PI_SCHEDULER_DIR` scratch dir — never the real

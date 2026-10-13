@@ -34,12 +34,17 @@ pi -e .
 /schedule add in 30m check the deploy status
 /schedule add at 15:00 stretch break --notify
 /schedule add every 45 minutes poll CI --global
-/schedule list            # tasks in scope for this session
-/schedule list --all      # everything, across projects
-/schedule remove <id>
-/schedule fire <id>       # fire now; this session becomes the owner
+/schedule add             # interactive wizard: when → prompt → delivery → scope
+/schedule list            # inline panel: filter, fire, delete, preview (text fallback outside the TUI)
+/schedule list --all      # include every project
+/schedule remove [id]     # pick from a list when id omitted
+/schedule fire [id]       # fire now; this session becomes the owner
 /schedule log             # recent run-log events
 ```
+
+Subcommands accept unique prefixes (`/schedule li`, `/schedule f`) plus `ls`/`rm` aliases.
+A widget above the editor shows the next in-scope task while any are scheduled, and on
+session start overdue tasks are offered in a single batch picker.
 
 ## Agent tools
 
