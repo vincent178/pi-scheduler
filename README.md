@@ -4,9 +4,10 @@
 
 **Reminders and scheduled tasks for [pi](https://github.com/earendil-works/pi), in plain language.**
 
-Tell pi *"PR 上线了，24 小时后查一下 bugsnag"* — or `/schedule add in 30m check the deploy` — and walk
-away. When the time comes, the task fires as a prompt the agent executes, or as a passive
-notification, in the session and project where it belongs.
+Tell pi *"the PR just went live — check bugsnag for this error in 24 hours"* — or
+`/schedule add in 30m check the deploy` — and walk away. When the time comes, the task
+fires as a prompt the agent executes, or as a passive notification, in the session and
+project where it belongs.
 
 ```text
 ──────────────────────────────────────────────────────────────────────────────────
@@ -15,8 +16,8 @@ notification, in the session and project where it belongs.
 
 > filter tasks…
 
-→ ⏰ in 23m · t-mv60hrjm   检查 goatapp/sneakers PR #32806 第五轮 CI + review 状态 — prompt
-  ⏰ in 7h · t-mv50ba9m    验证 PR #32782 合并后 Bugsnag error 是否停止上报 — prompt · project
+→ ⏰ in 23m · t-mv60hrjm   check CI and review status of PR #32806 — prompt
+  ⏰ in 7h · t-mv50ba9m    verify Bugsnag errors stopped after PR #32782 merged — prompt
 
  ↑↓ navigate · enter fire · ctrl+d delete · ctrl+o preview · ctrl+a all projects · esc close
 
@@ -34,9 +35,9 @@ or run `/schedule add` for the interactive wizard.
 
 ## Why
 
-- **The agent remembers for you** — describe the task in any language; the model turns it
-  into a scheduled task via tools (`create_schedule_task` / `list` / `cancel`). No flags
-  to learn if you don't want them.
+- **The agent remembers for you** — describe the task in your own words, in any
+  language; the model turns it into a scheduled task via tools (`create_schedule_task` /
+  `list` / `cancel`). No flags to learn if you don't want them.
 - **No daemon, no cloud** — tasks fire while a pi session is running, from a local JSON
   file. Missed while away? The next session start offers them in one batch picker.
 - **Fires where it belongs** — tasks are scoped to their project (git root or scheduling
