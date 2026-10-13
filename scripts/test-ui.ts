@@ -109,6 +109,30 @@ updateStore((d) => {
   check("escape closes panel", closed);
 }
 
+// --- out-of-scope fire guard (all-projects view must not fire foreign tasks) ---
+{
+  updateStore((d) => {
+    d.tasks = [makeTask("t-local", future), { ...makeTask("t-foreign", future), project_root: "/other/project" }];
+    return { result: null };
+  });
+  const fired: string[] = [];
+  const host: TaskHost = {
+    sessionId: "s-test",
+    cwd: CWD,
+    fire: (id) => (fired.push(id), true),
+    remove: () => null,
+  };
+  const c = new TaskListComponent(host, tui, theme, () => {}, true); // showAll
+  c.focused = true;
+  c.handleInput("\x1b[B"); // down to t-foreign
+  c.handleInput("\r");
+  check("out-of-scope task cannot be fired", fired.length === 0);
+  check("notice explains the block", c.render(100).join("\n").includes("belongs to /other/project"));
+  c.handleInput("\x1b[A"); // up to t-local
+  c.handleInput("\r");
+  check("in-scope task still fires", fired[0] === "t-local", fired.join(","));
+}
+
 // --- OverduePickComponent ---
 {
   const overdue = [makeTask("t-od1", past), makeTask("t-od2", past)];
@@ -131,7 +155,7 @@ updateStore((d) => {
 // --- widgetLines ---
 {
   const lines = widgetLines(theme, CWD);
-  check("widget shows next task", lines !== undefined && lines[0].includes("t-late"), lines?.[0]);
+  check("widget shows next task", lines !== undefined && lines[0].includes("t-local"), lines?.[0]);
   updateStore((d) => ({ result: (d.tasks = []) && null }));
   check("widget hides with no tasks", widgetLines(theme, CWD) === undefined);
 }

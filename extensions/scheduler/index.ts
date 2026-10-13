@@ -473,6 +473,15 @@ export default function (pi: ExtensionAPI) {
             id = (await pickTaskId(ctx, "Fire which task now?")) ?? "";
             if (!id) return;
           }
+          const target = readStore().tasks.find((x) => x.id === id);
+          if (!target) {
+            ctx.ui.notify(`no task ${id}`, "error");
+            return;
+          }
+          if (!inScope(target, ctx.cwd)) {
+            ctx.ui.notify(`task ${id} belongs to another project; fire it from there`, "error");
+            return;
+          }
           if (!engine?.fireNow(id)) {
             ctx.ui.notify(`no task ${id}`, "error");
             return;

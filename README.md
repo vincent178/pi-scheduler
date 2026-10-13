@@ -42,7 +42,7 @@ pi -e .
 /schedule log             # recent run-log events
 ```
 
-Subcommands accept unique prefixes (`/schedule l`, `/schedule f`) plus `ls`/`rm` aliases.
+Subcommands accept unique prefixes (`/schedule li`, `/schedule f`) plus `ls`/`rm` aliases.
 A widget above the editor shows the next in-scope task while any are scheduled, and on
 session start overdue tasks are offered in a single batch picker.
 

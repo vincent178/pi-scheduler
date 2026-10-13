@@ -118,6 +118,7 @@ export class TaskListComponent implements Component {
   private list: SelectList;
   private preview = false;
   private pendingDelete: string | null = null;
+  private notice: string | null = null;
   private _focused = false;
 
   // The TUI focuses this component; the inner Input needs the state for its
@@ -169,9 +170,16 @@ export class TaskListComponent implements Component {
       if (idx >= 0) list.setSelectedIndex(idx);
     }
     list.onSelect = (item) => {
-      this.host.fire(item.value);
-      this.refresh();
-      this.list = this.buildList();
+      const task = this.tasks.find((t) => t.id === item.value);
+      // fireNow force-claims without an inScope check; the panel must uphold
+      // the project-scoping invariant itself when showing all projects.
+      if (task && !inScope(task, this.host.cwd)) {
+        this.notice = `${task.id} belongs to ${task.project_root ?? "another project"} — fire it from there`;
+      } else {
+        this.host.fire(item.value);
+        this.refresh();
+        this.list = this.buildList();
+      }
       this.tui.requestRender();
     };
     list.onCancel = () => this.done();
@@ -184,6 +192,7 @@ export class TaskListComponent implements Component {
   }
 
   handleInput(data: string): void {
+    this.notice = null;
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
       if (this.pendingDelete) this.pendingDelete = null;
       else if (this.preview) this.preview = false;
@@ -251,7 +260,9 @@ export class TaskListComponent implements Component {
       }
     }
     lines.push("");
-    if (this.pendingDelete) {
+    if (this.notice) {
+      lines.push(truncateToWidth(` ${th.fg("error", this.notice)}`, width));
+    } else if (this.pendingDelete) {
       lines.push(truncateToWidth(` ${th.fg("error", `ctrl+d again to delete ${this.pendingDelete} · esc to cancel`)}`, width));
     } else {
       lines.push(
@@ -297,7 +308,7 @@ export class OverduePickComponent implements Component {
     if (matchesKey(data, "up") || matchesKey(data, "ctrl+p")) {
       this.selected = Math.max(0, this.selected - 1);
     } else if (matchesKey(data, "down") || matchesKey(data, "ctrl+n")) {
-      this.selected = Math.min(this.tasks.length - 1, this.selected + 1);
+      this.selected = Math.min(Math.max(0, this.tasks.length - 1), this.selected + 1);
     } else if (matchesKey(data, "space")) {
       const id = this.tasks[this.selected]?.id;
       if (id) this.marked.has(id) ? this.marked.delete(id) : this.marked.add(id);
