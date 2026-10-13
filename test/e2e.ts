@@ -1,7 +1,7 @@
 // End-to-end TUI verification: runs `pi -e .` in a pty (via script(1), no extra
 // deps), types "/schedule list", captures the rendered screen, and asserts the
 // inline task panel appears. Timing is sleep-based; keep waits generous.
-// Run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-e2e.ts
+// Run: PI_SCHEDULER_DIR=$(mktemp -d) node test/e2e.ts
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";

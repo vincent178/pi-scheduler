@@ -1,4 +1,4 @@
-// /schedule add argument-splitting verification. Run: node scripts/test-add-args.ts
+// /schedule add argument-splitting verification. Run: node test/add-args.ts
 import { parseAddArgs } from "../extensions/scheduler/index.ts";
 
 let failures = 0;

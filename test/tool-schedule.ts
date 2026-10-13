@@ -1,4 +1,4 @@
-// Tool schedule-params verification. Run: node scripts/test-tool-schedule.ts
+// Tool schedule-params verification. Run: node test/tool-schedule.ts
 import { resolveTaskSchedule } from "../extensions/scheduler/schedule.ts";
 
 let failures = 0;

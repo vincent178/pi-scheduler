@@ -20,12 +20,12 @@ jobs:
 
       - run: npx tsc
 
-      - run: node scripts/test-schedule.ts
+      - run: node test/schedule.ts
 
-      - run: node scripts/test-add-args.ts
+      - run: node test/add-args.ts
 
-      - run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts
+      - run: PI_SCHEDULER_DIR=$(mktemp -d) node test/store.ts
 
-      - run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine.ts
+      - run: PI_SCHEDULER_DIR=$(mktemp -d) node test/engine.ts
 
-      - run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine-timers.ts
+      - run: PI_SCHEDULER_DIR=$(mktemp -d) node test/engine-timers.ts

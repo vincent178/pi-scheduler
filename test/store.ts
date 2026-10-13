@@ -1,5 +1,5 @@
 // Store layer verification: concurrent writers, atomicity under races, log cap.
-// Run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts
+// Run: PI_SCHEDULER_DIR=$(mktemp -d) node test/store.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as fs from "node:fs";
@@ -27,7 +27,7 @@ if (!process.env.PI_SCHEDULER_DIR) {
 
 const WORKERS = 6;
 const ITERATIONS = 25;
-const workerScript = path.resolve("scripts/test-store-worker.ts");
+const workerScript = path.resolve("test/store-worker.ts");
 
 const runWorker = (id: string) =>
   promisify(execFile)(process.execPath, [workerScript, id, String(ITERATIONS)]);
