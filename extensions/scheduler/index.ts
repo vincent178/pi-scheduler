@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { Engine } from "./engine.ts";
 import { parseSchedule, initialNextFire, resolveTaskSchedule } from "./schedule.ts";
@@ -8,40 +9,20 @@ import {
   readLog,
   logEvent,
   newTaskId,
-  isSessionAlive,
   type ScheduledTask,
   type Schedule,
 } from "./store.ts";
 import { resolveProjectRoot, inScope } from "./project.ts";
-
-function relTime(iso: string, now = Date.now()): string {
-  const diff = Date.parse(iso) - now;
-  const abs = Math.abs(diff);
-  const unit =
-    abs < 60_000 ? `${Math.round(abs / 1000)}s`
-    : abs < 3_600_000 ? `${Math.round(abs / 60_000)}m`
-    : abs < 86_400_000 ? `${Math.round(abs / 3_600_000)}h`
-    : `${Math.round(abs / 86_400_000)}d`;
-  return diff >= 0 ? `in ${unit}` : `${unit} ago`;
-}
-
-function scheduleDesc(s: Schedule): string {
-  return s.type === "once" ? `once at ${new Date(s.at).toLocaleString()}` : `every ${s.every_minutes}m`;
-}
-
-function shortId(id: string): string {
-  return id.length > 12 ? `${id.slice(0, 4)}…${id.slice(-6)}` : id;
-}
-
-function formatScheduledTask(r: ScheduledTask, mySession: string, store = readStore()): string {
-  const owner = !r.sticky_session_id
-    ? "unowned"
-    : r.sticky_session_id === mySession
-      ? "this session"
-      : `${shortId(r.sticky_session_id)}${isSessionAlive(store, r.sticky_session_id) ? "" : " (stale)"}`;
-  const scope = r.scope === "global" ? "global" : `project:${r.project_root ?? "?"}`;
-  return `${r.id}  ${relTime(r.next_fire_at)}  [${scheduleDesc(r.schedule)}]  ${r.delivery}  ${scope}  owner:${owner}\n    ${r.prompt}`;
-}
+import { formatScheduledTask, relTime, scheduleDesc } from "./format.ts";
+import {
+  OverduePickComponent,
+  TaskListComponent,
+  oneLine,
+  scopedTasks,
+  taskRowLines,
+  widgetLines,
+  type TaskHost,
+} from "./ui.ts";
 
 interface AddArgs {
   when: string;
@@ -79,10 +60,76 @@ export function parseAddArgs(raw: string): AddArgs {
   );
 }
 
+const SUBCOMMANDS = ["add", "list", "remove", "fire", "log"] as const;
+type Subcommand = (typeof SUBCOMMANDS)[number];
+
+/** Exact name, alias, or unique prefix; "ambiguous" when a prefix matches several. */
+export function resolveSubcommand(token: string | undefined): Subcommand | "ambiguous" | null {
+  if (!token) return null;
+  const alias: Record<string, Subcommand> = { ls: "list", rm: "remove" };
+  if (alias[token]) return alias[token];
+  if ((SUBCOMMANDS as readonly string[]).includes(token)) return token as Subcommand;
+  const matches = SUBCOMMANDS.filter((s) => s.startsWith(token));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) return "ambiguous";
+  return null;
+}
+
+const USAGE =
+  "usage: /schedule add <when> <prompt> [--global] [--notify] | list [--all] | remove <id> | fire <id> | log [n]";
+
 export default function (pi: ExtensionAPI) {
   let engine: Engine | null = null;
   let sessionId = "";
   let sessionCwd = "";
+  let widgetCtx: ExtensionContext | null = null;
+  let widgetTimer: NodeJS.Timeout | null = null;
+
+  function refreshWidget(): void {
+    if (!widgetCtx || widgetCtx.mode !== "tui") return;
+    widgetCtx.ui.setWidget("scheduler", widgetLines(widgetCtx.ui.theme, widgetCtx.cwd));
+  }
+
+  function removeTask(id: string, via: "command" | "tool" | "overlay" = "command"): ScheduledTask | null {
+    const removed = updateStore((data) => {
+      const r = data.tasks.find((x) => x.id === id);
+      if (!r) return { result: null as ScheduledTask | null };
+      data.tasks = data.tasks.filter((x) => x.id !== id);
+      return { result: r };
+    });
+    if (removed) {
+      logEvent("cancelled", { id, session: sessionId, via });
+      engine?.sweep();
+      refreshWidget();
+    }
+    return removed;
+  }
+
+  function taskHost(ctx: ExtensionContext): TaskHost {
+    return {
+      sessionId,
+      cwd: ctx.cwd,
+      fire: (id) => {
+        const ok = engine?.fireNow(id) ?? false;
+        if (ok) refreshWidget();
+        return ok;
+      },
+      remove: (id) => removeTask(id, "overlay"),
+    };
+  }
+
+  /** Select-from-list fallback for /schedule remove|fire without an id. */
+  async function pickTaskId(ctx: ExtensionContext, title: string): Promise<string | null> {
+    const store = readStore();
+    const tasks = scopedTasks(false, ctx.cwd, store);
+    if (tasks.length === 0) {
+      ctx.ui.notify("no tasks in scope — /schedule list --all for everything", "info");
+      return null;
+    }
+    const options = tasks.map((r) => `${relTime(r.next_fire_at)}  ${r.id}  ${oneLine(r.prompt).slice(0, 60)}`);
+    const picked = await ctx.ui.select(title, options);
+    return picked === undefined ? null : tasks[options.indexOf(picked)].id;
+  }
 
   function createTask(
     prompt: string,
@@ -112,10 +159,59 @@ export default function (pi: ExtensionAPI) {
       via: opts.via,
     });
     engine?.sweep();
+    refreshWidget();
     return task;
   }
 
+  async function addWizard(ctx: ExtensionContext): Promise<void> {
+    if (!engine) {
+      ctx.ui.notify("task engine not running (no active session)", "error");
+      return;
+    }
+    const when = await ctx.ui.input(
+      "When should it fire?",
+      '"in 30m", "at 15:00", "tomorrow at 9am", "every 45 minutes"',
+    );
+    if (!when?.trim()) return;
+    let schedule: Schedule;
+    try {
+      schedule = parseSchedule(when);
+    } catch (err) {
+      ctx.ui.notify((err as Error).message, "error");
+      return;
+    }
+    const prompt = await ctx.ui.editor("Task prompt — self-contained instruction for the agent");
+    if (!prompt?.trim()) return;
+    const delivery = await ctx.ui.select("Delivery", [
+      "prompt — the agent executes it",
+      "notify — passive reminder",
+    ]);
+    if (delivery === undefined) return;
+    const scope = await ctx.ui.select("Scope", ["project — this project only", "global — any project"]);
+    if (scope === undefined) return;
+    const task = createTask(prompt.trim(), schedule, {
+      notify: delivery.startsWith("notify"),
+      global: scope.startsWith("global"),
+      via: "command",
+    });
+    ctx.ui.notify(
+      `⏰ ${task.id} fires ${relTime(task.next_fire_at)} — "${task.prompt}" (${task.delivery}, ${task.scope})`,
+      "info",
+    );
+  }
+
   async function pickOverdue(overdue: ScheduledTask[], ctx: ExtensionContext): Promise<void> {
+    if (ctx.mode === "tui") {
+      const fireIds = await ctx.ui.custom<string[]>(
+        (_tui, theme, _kb, done) => new OverduePickComponent(overdue, theme, (ids) => done(ids)),
+        { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%" } },
+      );
+      for (const r of overdue) {
+        if (fireIds.includes(r.id) && engine) engine.fireNow(r.id);
+        else engine?.snoozeOverdue(r.id);
+      }
+      return;
+    }
     if (!ctx.hasUI) {
       const list = overdue.map((r) => `${r.id}: ${r.prompt}`).join("; ");
       ctx.ui.notify(`⏰ ${overdue.length} overdue task(s) — ${list} — use /schedule fire <id>`, "warning");
@@ -138,6 +234,10 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     sessionId = ctx.sessionManager.getSessionId();
     sessionCwd = ctx.cwd;
+    widgetCtx = ctx;
+    refreshWidget();
+    widgetTimer = setInterval(refreshWidget, 30_000);
+    widgetTimer.unref();
     engine = new Engine({
       sessionId,
       cwd: ctx.cwd,
@@ -152,6 +252,9 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", () => {
+    if (widgetTimer) clearInterval(widgetTimer);
+    widgetTimer = null;
+    widgetCtx = null;
     engine?.shutdown();
     engine = null;
   });
@@ -228,6 +331,32 @@ export default function (pi: ExtensionAPI) {
       }
       return toolOk(tasks.map((r) => formatScheduledTask(r, sessionId, store)).join("\n"), { tasks });
     },
+
+    renderCall(args, theme) {
+      return new Text(
+        theme.fg("toolTitle", theme.bold("list_schedule_tasks")) + theme.fg("muted", args.all ? " (all projects)" : ""),
+        0,
+        0,
+      );
+    },
+
+    renderResult(result, { expanded }, theme) {
+      const details = result.details as ToolDetails | undefined;
+      if (details?.error) return new Text(theme.fg("error", `Error: ${details.error}`), 0, 0);
+      const tasks = details?.tasks ?? [];
+      if (tasks.length === 0) return new Text(theme.fg("dim", "No scheduled tasks"), 0, 0);
+      const store = readStore();
+      let text = theme.fg("muted", `${tasks.length} scheduled task(s):`);
+      const display = expanded ? tasks : tasks.slice(0, 6);
+      for (const r of display) {
+        const [meta, prompt] = taskRowLines(r, theme, 100, sessionId, store);
+        text += expanded ? `\n${meta}\n${prompt}` : `\n${meta}`;
+      }
+      if (!expanded && tasks.length > 6) {
+        text += `\n${theme.fg("dim", `... ${tasks.length - 6} more (expand to see)`)}`;
+      }
+      return new Text(text, 0, 0);
+    },
   });
 
   pi.registerTool({
@@ -244,12 +373,7 @@ export default function (pi: ExtensionAPI) {
       if (!inScope(task, sessionCwd)) {
         return toolFail(`task ${params.id} belongs to another project; cancel it from there or with /schedule remove`);
       }
-      updateStore((data) => {
-        data.tasks = data.tasks.filter((x) => x.id !== params.id);
-        return { result: null };
-      });
-      logEvent("cancelled", { id: params.id, session: sessionId, via: "tool" });
-      engine?.sweep();
+      removeTask(params.id, "tool");
       return toolOk(`Cancelled ${params.id} — "${task.prompt}"`, { task });
     },
   });
@@ -257,11 +381,24 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("schedule", {
     description: "Manage tasks: add <when> <prompt> | list [--all] | remove <id> | fire <id> | log [n]",
     handler: async (args, ctx) => {
-      const [sub, ...restTokens] = args.trim().split(/\s+/).filter(Boolean);
+      const [rawSub, ...restTokens] = args.trim().split(/\s+/).filter(Boolean);
       const rest = restTokens.join(" ");
+      const sub = resolveSubcommand(rawSub);
+      if (sub === "ambiguous") {
+        ctx.ui.notify(`ambiguous subcommand "${rawSub}" — ${USAGE}`, "error");
+        return;
+      }
 
       switch (sub) {
         case "add": {
+          if (!rest) {
+            if (ctx.mode !== "tui") {
+              ctx.ui.notify(USAGE, "error");
+              return;
+            }
+            await addWizard(ctx);
+            return;
+          }
           if (!engine) {
             ctx.ui.notify("task engine not running (no active session)", "error");
             return;
@@ -287,9 +424,15 @@ export default function (pi: ExtensionAPI) {
           return;
         }
 
-        case "list":
-        case "ls": {
+        case "list": {
           const all = restTokens.includes("--all");
+          if (ctx.mode === "tui") {
+            await ctx.ui.custom<void>(
+              (tui, theme, _kb, done) => new TaskListComponent(taskHost(ctx), tui, theme, () => done(), all),
+              { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%" } },
+            );
+            return;
+          }
           const store = readStore();
           const tasks = store.tasks.filter((r) => all || inScope(r, ctx.cwd));
           if (tasks.length === 0) {
@@ -303,38 +446,41 @@ export default function (pi: ExtensionAPI) {
           return;
         }
 
-        case "remove":
-        case "rm": {
-          if (!rest) {
-            ctx.ui.notify("usage: /schedule remove <id>", "error");
-            return;
+        case "remove": {
+          let id = rest;
+          if (!id) {
+            if (ctx.mode !== "tui") {
+              ctx.ui.notify("usage: /schedule remove <id>", "error");
+              return;
+            }
+            id = (await pickTaskId(ctx, "Remove which task?")) ?? "";
+            if (!id) return;
           }
-          const removed = updateStore((data) => {
-            const r = data.tasks.find((x) => x.id === rest);
-            if (!r) return { result: null as ScheduledTask | null };
-            data.tasks = data.tasks.filter((x) => x.id !== rest);
-            return { result: r };
-          });
+          const removed = removeTask(id);
           if (!removed) {
-            ctx.ui.notify(`no task ${rest}`, "error");
+            ctx.ui.notify(`no task ${id}`, "error");
             return;
           }
-          logEvent("cancelled", { id: rest, session: sessionId });
-          engine?.sweep();
-          ctx.ui.notify(`removed ${rest} — "${removed.prompt}"`, "info");
+          ctx.ui.notify(`removed ${id} — "${removed.prompt}"`, "info");
           return;
         }
 
         case "fire": {
-          if (!rest) {
-            ctx.ui.notify("usage: /schedule fire <id>", "error");
+          let id = rest;
+          if (!id) {
+            if (ctx.mode !== "tui") {
+              ctx.ui.notify("usage: /schedule fire <id>", "error");
+              return;
+            }
+            id = (await pickTaskId(ctx, "Fire which task now?")) ?? "";
+            if (!id) return;
+          }
+          if (!engine?.fireNow(id)) {
+            ctx.ui.notify(`no task ${id}`, "error");
             return;
           }
-          if (!engine?.fireNow(rest)) {
-            ctx.ui.notify(`no task ${rest}`, "error");
-            return;
-          }
-          ctx.ui.notify(`fired ${rest} — this session now owns it`, "info");
+          refreshWidget();
+          ctx.ui.notify(`fired ${id} — this session now owns it`, "info");
           return;
         }
 
@@ -357,10 +503,7 @@ export default function (pi: ExtensionAPI) {
         }
 
         default:
-          ctx.ui.notify(
-            "usage: /schedule add <when> <prompt> [--global] [--notify] | list [--all] | remove <id> | fire <id> | log [n]",
-            "info",
-          );
+          ctx.ui.notify(USAGE, "info");
       }
     },
   });
