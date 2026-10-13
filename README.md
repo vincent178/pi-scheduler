@@ -5,9 +5,9 @@
 **Reminders and scheduled tasks for [pi](https://github.com/earendil-works/pi), in plain language.**
 
 Tell pi *"the PR just went live — check bugsnag for this error in 24 hours"* — or
-`/schedule add in 30m check the deploy` — and walk away. When the time comes, the task
-fires as a prompt the agent executes, or as a passive notification, in the session and
-project where it belongs.
+`/schedule add in 45m take the laundry out --notify` — and walk away. When the time
+comes, the task fires as a prompt the agent executes, or as a passive notification, in
+the session and project where it belongs.
 
 ```text
 ──────────────────────────────────────────────────────────────────────────────────
