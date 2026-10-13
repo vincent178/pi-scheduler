@@ -35,6 +35,14 @@ export function nextFireAt(cwd: string): number | null {
   return next ? Date.parse(next.next_fire_at) : null;
 }
 
+const WIDGET_TICK_MS = 30_000;
+const WIDGET_LIVE_WINDOW_MS = 2 * 60_000;
+const WIDGET_LIVE_TICK_MS = 1_000;
+
+export function widgetTickMs(nextFire: number | null, now: number = Date.now()): number {
+  return nextFire !== null && nextFire - now <= WIDGET_LIVE_WINDOW_MS ? WIDGET_LIVE_TICK_MS : WIDGET_TICK_MS;
+}
+
 export function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }

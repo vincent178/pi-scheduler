@@ -22,12 +22,9 @@ import {
   scopedTasks,
   taskRowLines,
   widgetLines,
+  widgetTickMs,
   type TaskHost,
 } from "./ui.ts";
-
-const WIDGET_TICK_MS = 30_000;
-const WIDGET_LIVE_WINDOW_MS = 2 * 60_000;
-const WIDGET_LIVE_TICK_MS = 1_000;
 
 interface AddArgs {
   when: string;
@@ -95,18 +92,15 @@ export default function (pi: ExtensionAPI) {
     widgetCtx.ui.setWidget("scheduler", widgetLines(widgetCtx.ui.theme, widgetCtx.cwd));
   }
 
-  // The countdown only needs 1s granularity in the final stretch; a 30s tick
-  // keeps an idle session's widget from visibly churning. Mutations must poke,
-  // or a freshly created short-fuse task waits up to 30s to switch rates.
+  // Mutations must poke, or a freshly created short-fuse task waits out the
+  // current 30s tick before the countdown switches to 1s.
   function scheduleWidgetTick(): void {
-    if (!widgetCtx) return;
+    if (!widgetCtx || widgetCtx.mode !== "tui") return;
     if (widgetTimer) clearTimeout(widgetTimer);
-    const next = nextFireAt(widgetCtx.cwd);
-    const live = next !== null && next - Date.now() <= WIDGET_LIVE_WINDOW_MS;
     widgetTimer = setTimeout(() => {
       refreshWidget();
       scheduleWidgetTick();
-    }, live ? WIDGET_LIVE_TICK_MS : WIDGET_TICK_MS);
+    }, widgetTickMs(nextFireAt(widgetCtx.cwd)));
     widgetTimer.unref();
   }
 
