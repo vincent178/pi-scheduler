@@ -40,7 +40,11 @@ const WIDGET_LIVE_WINDOW_MS = 2 * 60_000;
 const WIDGET_LIVE_TICK_MS = 1_000;
 
 export function widgetTickMs(nextFire: number | null, now: number = Date.now()): number {
-  return nextFire !== null && nextFire - now <= WIDGET_LIVE_WINDOW_MS ? WIDGET_LIVE_TICK_MS : WIDGET_TICK_MS;
+  if (nextFire === null) return WIDGET_TICK_MS;
+  const remaining = nextFire - now;
+  if (remaining <= WIDGET_LIVE_WINDOW_MS) return WIDGET_LIVE_TICK_MS;
+  // Wake exactly at the window boundary so the 1s cadence starts on time.
+  return Math.min(WIDGET_TICK_MS, remaining - WIDGET_LIVE_WINDOW_MS);
 }
 
 export function oneLine(text: string): string {

@@ -164,7 +164,8 @@ updateStore((d) => {
 {
   const now = Date.now();
   check("tick 30s when no tasks", widgetTickMs(null, now) === 30_000);
-  check("tick 30s beyond live window", widgetTickMs(now + 2 * 60_000 + 1, now) === 30_000);
+  check("tick 30s far beyond live window", widgetTickMs(now + 10 * 60_000, now) === 30_000);
+  check("tick wakes at live window boundary", widgetTickMs(now + 2 * 60_000 + 10_000, now) === 10_000);
   check("tick 1s at live window boundary", widgetTickMs(now + 2 * 60_000, now) === 1_000);
   check("tick 1s inside live window", widgetTickMs(now + 42_000, now) === 1_000);
   check("tick 1s when overdue", widgetTickMs(now - 5_000, now) === 1_000);
