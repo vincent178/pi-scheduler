@@ -30,6 +30,23 @@ export function scopedTasks(all: boolean, cwd: string, store: StoreData = readSt
     .sort((a, b) => Date.parse(a.next_fire_at) - Date.parse(b.next_fire_at));
 }
 
+export function nextFireAt(cwd: string): number | null {
+  const next = scopedTasks(false, cwd)[0];
+  return next ? Date.parse(next.next_fire_at) : null;
+}
+
+const WIDGET_TICK_MS = 30_000;
+const WIDGET_LIVE_WINDOW_MS = 2 * 60_000;
+const WIDGET_LIVE_TICK_MS = 1_000;
+
+export function widgetTickMs(nextFire: number | null, now: number = Date.now()): number {
+  if (nextFire === null) return WIDGET_TICK_MS;
+  const remaining = nextFire - now;
+  if (remaining <= WIDGET_LIVE_WINDOW_MS) return WIDGET_LIVE_TICK_MS;
+  // Wake exactly at the window boundary so the 1s cadence starts on time.
+  return Math.min(WIDGET_TICK_MS, remaining - WIDGET_LIVE_WINDOW_MS);
+}
+
 export function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }

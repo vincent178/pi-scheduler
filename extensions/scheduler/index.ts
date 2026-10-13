@@ -17,10 +17,12 @@ import { formatScheduledTask, relTime, scheduleDesc } from "./format.ts";
 import {
   OverduePickComponent,
   TaskListComponent,
+  nextFireAt,
   oneLine,
   scopedTasks,
   taskRowLines,
   widgetLines,
+  widgetTickMs,
   type TaskHost,
 } from "./ui.ts";
 
@@ -90,6 +92,23 @@ export default function (pi: ExtensionAPI) {
     widgetCtx.ui.setWidget("scheduler", widgetLines(widgetCtx.ui.theme, widgetCtx.cwd));
   }
 
+  // Mutations must poke, or a freshly created short-fuse task waits out the
+  // current 30s tick before the countdown switches to 1s.
+  function scheduleWidgetTick(): void {
+    if (!widgetCtx || widgetCtx.mode !== "tui") return;
+    if (widgetTimer) clearTimeout(widgetTimer);
+    widgetTimer = setTimeout(() => {
+      refreshWidget();
+      scheduleWidgetTick();
+    }, widgetTickMs(nextFireAt(widgetCtx.cwd)));
+    widgetTimer.unref();
+  }
+
+  function pokeWidget(): void {
+    refreshWidget();
+    scheduleWidgetTick();
+  }
+
   function removeTask(id: string, via: "command" | "tool" | "overlay" = "command"): ScheduledTask | null {
     const removed = updateStore((data) => {
       const r = data.tasks.find((x) => x.id === id);
@@ -100,7 +119,7 @@ export default function (pi: ExtensionAPI) {
     if (removed) {
       logEvent("cancelled", { id, session: sessionId, via });
       engine?.sweep();
-      refreshWidget();
+      pokeWidget();
     }
     return removed;
   }
@@ -111,7 +130,7 @@ export default function (pi: ExtensionAPI) {
       cwd: ctx.cwd,
       fire: (id) => {
         const ok = engine?.fireNow(id) ?? false;
-        if (ok) refreshWidget();
+        if (ok) pokeWidget();
         return ok;
       },
       remove: (id) => removeTask(id, "overlay"),
@@ -159,7 +178,7 @@ export default function (pi: ExtensionAPI) {
       via: opts.via,
     });
     engine?.sweep();
-    refreshWidget();
+    pokeWidget();
     return task;
   }
 
@@ -235,8 +254,7 @@ export default function (pi: ExtensionAPI) {
     sessionCwd = ctx.cwd;
     widgetCtx = ctx;
     refreshWidget();
-    widgetTimer = setInterval(refreshWidget, 30_000);
-    widgetTimer.unref();
+    scheduleWidgetTick();
     engine = new Engine({
       sessionId,
       cwd: ctx.cwd,
@@ -251,7 +269,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", () => {
-    if (widgetTimer) clearInterval(widgetTimer);
+    if (widgetTimer) clearTimeout(widgetTimer);
     widgetTimer = null;
     widgetCtx = null;
     engine?.shutdown();
@@ -486,7 +504,7 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.notify(`no task ${id}`, "error");
             return;
           }
-          refreshWidget();
+          pokeWidget();
           ctx.ui.notify(`fired ${id} — this session now owns it`, "info");
           return;
         }
