@@ -27,12 +27,6 @@ the session and project where it belongs.
 ## Install
 
 ```bash
-pi install npm:@vincent178/pi-scheduler
-```
-
-Or straight from git:
-
-```bash
 pi install git:github.com/vincent178/pi-scheduler
 ```
 
