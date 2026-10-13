@@ -38,6 +38,7 @@ PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine-timers.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-ui.ts
+PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-e2e.ts
 ```
 
 Store/engine tests must use a fresh `PI_SCHEDULER_DIR` scratch dir — never the real
