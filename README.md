@@ -1,20 +1,27 @@
 # pi-scheduler
 
-Scheduled tasks for [pi](https://github.com/earendil-works/pi). At time A you schedule a
-task with natural-language time; at time B pi fires it as a prompt (the agent executes it)
-or a notification — in the session and project where it belongs. A task with `notify`
-delivery is just a reminder.
+[![CI](https://github.com/vincent178/pi-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/vincent178/pi-scheduler/actions/workflows/ci.yml)
 
-## Features
+**Reminders and scheduled tasks for [pi](https://github.com/earendil-works/pi), in plain language.**
 
-- **Natural-language schedules** — `in 30m`, `at 15:00`, `every 45 minutes`, ISO dates
-- **Agent tools** — the agent manages tasks straight from conversation, in any language: "PR 上线了，24小时后查一下 bugsnag" becomes a scheduled task
-- **Prompt or notify delivery** — prompts inject a user message the agent executes (default); notifications are passive
-- **Project scoping** — a task fires only in the project that scheduled it (git repo root, or the creating directory for non-git projects); `global` tasks fire anywhere
-- **Session stickiness** — the scheduling session owns the task while it's alive; whichever session fires a task owns its next firings; ownership transfers when the owner closes or goes stale
-- **Missed-task catch-up** — on session start, overdue in-scope tasks are listed; you pick which to fire
-- **Busy-queue** — tasks that come due mid-turn are queued and delivered when the agent settles
-- **Run log** — append-only JSONL audit trail of every task event
+Tell pi *"PR 上线了，24 小时后查一下 bugsnag"* — or `/schedule add in 30m check the deploy` — and walk
+away. When the time comes, the task fires as a prompt the agent executes, or as a passive
+notification, in the session and project where it belongs.
+
+```text
+──────────────────────────────────────────────────────────────────────────────────
+
+ Scheduled Tasks — this project · 2
+
+> filter tasks…
+
+→ ⏰ in 23m · t-mv60hrjm   检查 goatapp/sneakers PR #32806 第五轮 CI + review 状态 — prompt
+  ⏰ in 7h · t-mv50ba9m    验证 PR #32782 合并后 Bugsnag error 是否停止上报 — prompt · project
+
+ ↑↓ navigate · enter fire · ctrl+d delete · ctrl+o preview · ctrl+a all projects · esc close
+
+──────────────────────────────────────────────────────────────────────────────────
+```
 
 ## Install
 
@@ -22,11 +29,21 @@ delivery is just a reminder.
 pi install git:github.com/vincent178/pi-scheduler
 ```
 
-Or load once without installing:
+That's it — no daemon, no config. Try it: tell pi *"in 5 minutes, remind me to stretch"*,
+or run `/schedule add` for the interactive wizard.
 
-```bash
-pi -e .
-```
+## Why
+
+- **The agent remembers for you** — describe the task in any language; the model turns it
+  into a scheduled task via tools (`create_schedule_task` / `list` / `cancel`). No flags
+  to learn if you don't want them.
+- **No daemon, no cloud** — tasks fire while a pi session is running, from a local JSON
+  file. Missed while away? The next session start offers them in one batch picker.
+- **Fires where it belongs** — tasks are scoped to their project (git root or scheduling
+  directory) and sticky to their session. A task about repo A never lands in repo B.
+- **A real TUI, not a wall of text** — `/schedule list` is a filterable inline panel:
+  fire, delete, preview, jump between projects. A widget above the editor always shows
+  what's next.
 
 ## Usage
 
@@ -35,7 +52,7 @@ pi -e .
 /schedule add at 15:00 stretch break --notify
 /schedule add every 45 minutes poll CI --global
 /schedule add             # interactive wizard: when → prompt → delivery → scope
-/schedule list            # inline panel: filter, fire, delete, preview (text fallback outside the TUI)
+/schedule list            # inline panel (text fallback outside the TUI)
 /schedule list --all      # include every project
 /schedule remove [id]     # pick from a list when id omitted
 /schedule fire [id]       # fire now; this session becomes the owner
@@ -43,94 +60,51 @@ pi -e .
 ```
 
 Subcommands accept unique prefixes (`/schedule li`, `/schedule f`) plus `ls`/`rm` aliases.
-A widget above the editor shows the next in-scope task while any are scheduled, and on
-session start overdue tasks are offered in a single batch picker.
+Natural-language schedules work everywhere: `in 30m`, `at 15:00`, `every 45 minutes`,
+ISO dates.
 
-## Agent tools
+## How it works
 
-The agent manages tasks itself via three tools — just say what should
-happen and when, in any language:
+**Delivery.** `prompt` (default) injects the task as a user message the agent executes;
+`--notify` is passive. Tasks that come due mid-turn are queued until the agent settles;
+notifications show immediately.
 
-```text
-PR 已经合并并上线了，过了24小时之后查看 bugsnag 是否该问题还存在
-```
+**Scoping.** Project tasks (default) fire only when the session's working directory is at
+or under the project root — the git repo root, or the scheduling directory for non-git
+projects. `--global` tasks fire anywhere. Other projects' tasks surface only as a one-line
+digest at session start.
 
-- `create_schedule_task` — the model does the language understanding and calls the tool
-  with structured arguments: `prompt` plus exactly one of `at` (ISO 8601 datetime),
-  `delay` (`"24h"`, `"30m"`), or `every` (`"45m"`, `"1h"` for recurring), with optional
-  `notify` and `global` flags.
-- `list_schedule_tasks` — lists tasks in the current project (`all=true` for everything).
-- `cancel_schedule_task` — cancels a task by id; only tasks in the current project can
-  be cancelled.
+**Stickiness.** The scheduling session owns a task; the firing session takes over, so
+recurring tasks keep landing in the same session. Ownership releases on shutdown (or after
+a ~90s stale heartbeat), and the next in-scope session claims the task. Stickiness never
+overrides scoping.
 
-Tool-managed tasks behave exactly like `/schedule add` tasks: same scoping, stickiness,
-catch-up, and run log.
+**Missed tasks.** No daemon means tasks only fire while pi is running. Overdue in-scope
+tasks are listed at session start — pick which to fire; the rest wait for next time.
 
-## Scopes
-
-- **project** (default) — fires only when the session's working directory is at or under the
-  project root. The project root is the git repo root when inside a repo, otherwise the
-  directory the task was scheduled in (non-git directories are first-class projects).
-- **global** (`--global`) — fires in any session.
-
-Project tasks are invisible elsewhere except as a one-line digest at session start:
-`⏰ N pending tasks in other projects: …`.
-
-## Delivery
-
-- **prompt** (default) — injects the task as a user message; the agent executes it.
-- **notify** (`--notify`) — passive notification only.
-
-Tasks that come due while the agent is mid-turn are queued and delivered when the agent
-settles. Notifications are shown immediately.
-
-## Session stickiness
-
-The session that schedules a task owns it while it is alive. When a task fires, the firing
-session becomes its owner, so recurring tasks keep landing in the same session. Ownership
-is released when the owning session shuts down (or its heartbeat goes stale after ~90s);
-the next in-scope session to reach fire time claims it. Stickiness never overrides project
-scoping. When two sessions race to fire the same task, the winner's write may very
-rarely be lost and both deliver — the store favors simplicity over serialization.
-
-## Missed tasks
-
-Tasks only fire while a pi session is running — there is no daemon. When a session starts,
-overdue in-scope tasks are listed one by one and you pick which to fire (picking also makes
-your session the owner). Unpicked tasks stay overdue and are listed again at the next
-session start.
-
-## Run log
-
-Every task event (`created`, `fired`, `deleted_after_fire`, `sticky_claimed`,
-`sticky_transferred`, `sticky_released`, `sticky_held_skip`, `deferred`, `overdue_listed`,
-`digest`, `cancelled`, `error`, …) is appended as one JSON line to the run log, capped at
-~1 MB (truncation keeps the newest entries). `/schedule log [n]` shows the last n events.
-One-shot tasks are deleted from the store after firing — the run log is their history.
-
-## Storage
+**Audit trail.** Every task event (`created`, `fired`, `sticky_claimed`, `deferred`,
+`cancelled`, …) is one JSON line in `~/.pi/agent/scheduler.log` (capped at ~1 MB);
+`/schedule log` tails it. One-shot tasks leave the store after firing — the log is their
+history.
 
 | File | Contents |
 |---|---|
 | `~/.pi/agent/scheduler.json` | task store + session presence registry (atomic tmp-write + rename) |
-| `~/.pi/agent/scheduler.log` | append-only JSONL run log, capped at ~1 MB |
+| `~/.pi/agent/scheduler.log` | append-only JSONL run log |
+
+One race is accepted by design: two sessions firing the same task simultaneously may both
+deliver — the store favors simplicity over serialization.
 
 ## Development
 
 ```bash
 npm install
-pi -e .
+pi -ne -e .     # -ne avoids conflicts with an installed copy
 ```
 
-Tests (plain `node`, no build step — Node ≥ 22.6 strips types natively):
+Type check plus seven plain-`node` test scripts, including a pty-driven e2e that renders
+the panel in a real pi TUI — see [AGENTS.md](AGENTS.md) for the full verification loop.
 
-```bash
-npx tsc                                        # type check
-node scripts/test-schedule.ts                  # schedule parsing
-node scripts/test-add-args.ts                  # /schedule add arg splitting
-node scripts/test-tool-schedule.ts             # create_schedule_task schedule params
-node scripts/test-tool-scope.ts                # list/cancel scope policy
-PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts          # store concurrency
-PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine.ts         # engine, two sessions
-PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine-timers.ts  # real-timer firing
-```
+## License
+
+MIT
