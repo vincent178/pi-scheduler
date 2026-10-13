@@ -1,6 +1,6 @@
 // UI component verification: task list overlay rendering and key handling, overdue
 // picker semantics, widget line. Uses a fake theme/tui; drives the real store.
-// Run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-ui.ts
+// Run: PI_SCHEDULER_DIR=$(mktemp -d) node test/ui.ts
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
 import { updateStore, readStore, type ScheduledTask } from "../extensions/scheduler/store.ts";

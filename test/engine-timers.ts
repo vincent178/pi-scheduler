@@ -1,5 +1,5 @@
 // Real-timer firing test: start an engine, add a task due in ~3s, expect delivery.
-// Run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine-timers.ts
+// Run: PI_SCHEDULER_DIR=$(mktemp -d) node test/engine-timers.ts
 import { updateStore, newTaskId, readStore } from "../extensions/scheduler/store.ts";
 import { Engine, type EngineHost } from "../extensions/scheduler/engine.ts";
 

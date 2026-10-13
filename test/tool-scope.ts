@@ -1,4 +1,4 @@
-// Scope-policy verification for the list/cancel tools. Run: node scripts/test-tool-scope.ts
+// Scope-policy verification for the list/cancel tools. Run: node test/tool-scope.ts
 import { inScope } from "../extensions/scheduler/project.ts";
 
 let failures = 0;

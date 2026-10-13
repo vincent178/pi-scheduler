@@ -10,7 +10,7 @@ time B. A notify-only task is just a reminder. See README.md for the full design
   `schedule.ts` natural-language parsing, `project.ts` project scoping,
   `format.ts` pi-free text formatting, `ui.ts` TUI components: task-list overlay,
   overdue picker, editor widget)
-- `scripts/` — verification scripts, not a test framework
+- `test/` — verification scripts (plain `node`, no test framework)
 
 ## Code style
 
@@ -36,17 +36,20 @@ Every change runs:
 
 ```bash
 npx tsc                          # strict type check
-node scripts/test-schedule.ts
-node scripts/test-add-args.ts
-PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-store.ts
-PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine.ts
-PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine-timers.ts
-PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-ui.ts
-PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-e2e.ts
+node test/schedule.ts
+node test/add-args.ts
+node test/tool-schedule.ts
+node test/tool-scope.ts
+PI_SCHEDULER_DIR=$(mktemp -d) node test/store.ts
+PI_SCHEDULER_DIR=$(mktemp -d) node test/engine.ts
+PI_SCHEDULER_DIR=$(mktemp -d) node test/engine-timers.ts
+PI_SCHEDULER_DIR=$(mktemp -d) node test/ui.ts
+PI_SCHEDULER_DIR=$(mktemp -d) node test/e2e.ts
 ```
 
 Store/engine tests must use a fresh `PI_SCHEDULER_DIR` scratch dir — never the real
-`~/.pi/agent`. Interactive end-to-end checks load the package with `pi -e .`.
+`~/.pi/agent`. Interactive end-to-end checks load the package with `pi -ne -e .`
+(`-ne` avoids tool-name conflicts with an installed copy).
 
 ## Invariants
 

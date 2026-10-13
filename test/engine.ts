@@ -1,5 +1,5 @@
 // Engine verification with two simulated sessions sharing one store.
-// Run: PI_SCHEDULER_DIR=$(mktemp -d) node scripts/test-engine.ts
+// Run: PI_SCHEDULER_DIR=$(mktemp -d) node test/engine.ts
 import { readStore, updateStore, touchSession, newTaskId, type ScheduledTask } from "../extensions/scheduler/store.ts";
 import { Engine, type EngineHost } from "../extensions/scheduler/engine.ts";
 

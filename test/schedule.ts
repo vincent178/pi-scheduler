@@ -1,4 +1,4 @@
-// Schedule parsing verification. Run: node scripts/test-schedule.ts
+// Schedule parsing verification. Run: node test/schedule.ts
 import { parseSchedule, initialNextFire, advanceNextFire } from "../extensions/scheduler/schedule.ts";
 
 let failures = 0;
