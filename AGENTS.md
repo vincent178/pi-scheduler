@@ -25,6 +25,10 @@ time B. A notify-only task is just a reminder. See README.md for the full design
 - Keep the engine pi-free: `engine.ts`, `store.ts`, `schedule.ts`, `project.ts`,
   `format.ts` must not import pi packages; `index.ts` is the only file that touches
   `ExtensionAPI` (`ui.ts` may import `@earendil-works/pi-tui` components and types).
+- TUI work: survey pi's built-in selector patterns first (`SelectList`, `SettingsList`,
+  the preset/session selectors in pi's extension examples) and match that inline-panel
+  style; don't hand-roll overlay components. PRs that change TUI rendering must include
+  a screenshot or terminal capture of the rendered result.
 
 ## Verification
 
