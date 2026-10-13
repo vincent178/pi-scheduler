@@ -30,6 +30,11 @@ export function scopedTasks(all: boolean, cwd: string, store: StoreData = readSt
     .sort((a, b) => Date.parse(a.next_fire_at) - Date.parse(b.next_fire_at));
 }
 
+export function nextFireAt(cwd: string): number | null {
+  const next = scopedTasks(false, cwd)[0];
+  return next ? Date.parse(next.next_fire_at) : null;
+}
+
 export function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
