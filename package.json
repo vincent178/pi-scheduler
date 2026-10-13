@@ -1,10 +1,27 @@
 {
-  "name": "pi-scheduler",
+  "name": "@vincent178/pi-scheduler",
   "version": "0.1.0",
-  "description": "Scheduled tasks for pi: schedule a prompt at time A, the agent executes it at time B. Project/global scoping, session stickiness, missed-task catch-up",
-  "keywords": ["pi-package"],
+  "description": "Reminders and scheduled tasks for pi, in plain language: natural-language times, project scoping, session stickiness, missed-task catch-up, TUI panel, agent tools",
+  "keywords": ["pi-package", "pi-extension", "scheduler", "reminder", "cron", "tasks"],
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vincent178/pi-scheduler.git"
+  },
+  "homepage": "https://github.com/vincent178/pi-scheduler#readme",
+  "bugs": {
+    "url": "https://github.com/vincent178/pi-scheduler/issues"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "files": [
+    "extensions"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "pi": {
     "extensions": ["./extensions/scheduler/index.ts"]
   },
