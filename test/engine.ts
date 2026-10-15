@@ -1,6 +1,7 @@
 // Engine verification with two simulated sessions sharing one store.
 // Run: PI_SCHEDULER_DIR=$(mktemp -d) node test/engine.ts
-import { readStore, updateStore, touchSession, newTaskId, type ScheduledTask } from "../extensions/scheduler/store.ts";
+import fs from "node:fs";
+import { readStore, updateStore, touchSession, newTaskId, logPath, type ScheduledTask } from "../extensions/scheduler/store.ts";
 import { Engine, type EngineHost } from "../extensions/scheduler/engine.ts";
 
 let failures = 0;
@@ -133,6 +134,25 @@ check("prompt not delivered while busy", !hostB.prompts.some((p) => p.includes("
 hostB.busy = false;
 hostB.idle();
 check("queued prompt flushed on idle", hostB.prompts.some((p) => p.includes("busy test")));
+
+// Regression: N fires of one recurring task while busy flush as one prompt.
+const rc = addScheduledTask({ prompt: "coalesce busy fires", sticky_session_id: "session-B" });
+hostB.busy = true;
+for (let i = 0; i < 3; i++) {
+  updateStore((data) => {
+    data.tasks.find((x) => x.id === rc.id)!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    return { result: null };
+  });
+  engineB.fireDue();
+}
+check("nothing delivered while busy", !hostB.prompts.some((p) => p.includes("coalesce busy fires")));
+hostB.busy = false;
+hostB.idle();
+const coalesced = hostB.prompts.filter((p) => p.includes("coalesce busy fires")).length;
+check("busy backlog flushes exactly once", coalesced === 1, `deliveries=${coalesced}`);
+const log = fs.readFileSync(logPath(), "utf8");
+check("coalesced fires visible in run log", log.includes("deferred_coalesced"));
+check("flush logged once for coalesced task", log.split("\n").filter((l) => l.includes("deferred_flush") && l.includes(rc.id)).length === 1);
 
 const r5 = addScheduledTask({ prompt: "notify test", delivery: "notify", sticky_session_id: "session-B" });
 hostB.busy = true;

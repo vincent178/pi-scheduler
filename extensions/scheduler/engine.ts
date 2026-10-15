@@ -256,8 +256,15 @@ export class Engine {
         return;
       }
       if (this.host.isBusy()) {
-        this.queue.push(r);
-        logEvent("deferred", { id: r.id, session: this.host.sessionId, reason: "agent busy" });
+        // Coalesce by task id: a backlogged recurring task flushes once, latest copy.
+        const i = this.queue.findIndex((q) => q.id === r.id);
+        if (i >= 0) {
+          this.queue[i] = r;
+          logEvent("deferred_coalesced", { id: r.id, session: this.host.sessionId, reason: "agent busy" });
+        } else {
+          this.queue.push(r);
+          logEvent("deferred", { id: r.id, session: this.host.sessionId, reason: "agent busy" });
+        }
         return;
       }
       this.host.deliverPrompt(taskText(r));
