@@ -154,6 +154,18 @@ const log = fs.readFileSync(logPath(), "utf8");
 check("coalesced fires visible in run log", log.includes("deferred_coalesced"));
 check("flush logged once for coalesced task", log.split("\n").filter((l) => l.includes("deferred_flush") && l.includes(rc.id)).length === 1);
 
+// Regression: an idle event arriving while still busy (e.g. compaction) must not
+// flush — prompt() throws during compaction even with deliverAs set.
+const r8 = addScheduledTask({ prompt: "flush guard", sticky_session_id: "session-B" });
+hostB.busy = true;
+engineB.fireDue();
+hostB.idle();
+check("flush skipped while still busy", !hostB.prompts.some((p) => p.includes("flush guard")));
+hostB.busy = false;
+hostB.idle();
+const flushGuard = hostB.prompts.filter((p) => p.includes("flush guard")).length;
+check("queued task flushed on next idle", flushGuard === 1, `deliveries=${flushGuard}`);
+
 const r5 = addScheduledTask({ prompt: "notify test", delivery: "notify", sticky_session_id: "session-B" });
 hostB.busy = true;
 engineB.fireDue();

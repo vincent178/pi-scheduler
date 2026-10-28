@@ -274,6 +274,8 @@ export class Engine {
   }
 
   private flushQueue(): void {
+    // isBusy also covers compaction, where prompt() throws regardless of deliverAs.
+    if (this.host.isBusy()) return;
     const queued = this.queue.splice(0);
     for (const r of queued) {
       logEvent("deferred_flush", { id: r.id, session: this.host.sessionId });
