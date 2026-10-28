@@ -259,7 +259,10 @@ export default function (pi: ExtensionAPI) {
       sessionId,
       cwd: ctx.cwd,
       projectRoot: resolveProjectRoot(ctx.cwd),
-      deliverPrompt: (text) => pi.sendUserMessage(text),
+      // deliverAs followUp: without it pi throws "Agent is already processing" when a
+      // delivery lands mid-turn (e.g. flushing several queued tasks on settle), and that
+      // rejection is reported by pi itself as Extension "<runtime>" error — we can't catch it.
+      deliverPrompt: (text) => pi.sendUserMessage(text, { deliverAs: "followUp" }),
       notify: (text) => ctx.ui.notify(text, "info"),
       isBusy: () => !ctx.isIdle(),
       onIdle: (cb) => pi.on("agent_settled", () => cb()),
