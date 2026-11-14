@@ -109,16 +109,16 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-function isDeadLock(path: string): boolean {
+function deadLockOwner(path: string): string | null {
   let owner: string;
   try {
     owner = fs.readlinkSync(path);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
   const match = /^(\d+)-[a-f0-9]{32}$/.exec(owner);
-  return match !== null && !isProcessAlive(Number(match[1]));
+  return match !== null && !isProcessAlive(Number(match[1])) ? owner : null;
 }
 
 function releaseLock(path: string, owner: string): void {
@@ -140,20 +140,19 @@ function acquireLock(path: string): string {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
 
-    if (isDeadLock(path)) removeDeadLock(path);
+    const deadOwner = deadLockOwner(path);
+    if (deadOwner) removeDeadLock(path, deadOwner);
     if (Date.now() >= deadline) throw new Error(`Timed out waiting for the scheduler lock: ${path}`);
     Atomics.wait(lockWaitArray, 0, 0, LOCK_RETRY_MS);
   }
 }
 
-function removeDeadLock(path: string): void {
+function removeDeadLock(path: string, deadOwner: string): void {
   const recoveryPath = `${path}.recovery`;
   const recoveryOwner = acquireLock(recoveryPath);
   try {
-    // A live process can keep its lock. A dead process cannot resume a write.
-    if (isDeadLock(path)) fs.unlinkSync(path);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    // Remove only the owner that passed the liveness check.
+    releaseLock(path, deadOwner);
   } finally {
     releaseLock(recoveryPath, recoveryOwner);
   }
