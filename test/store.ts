@@ -31,6 +31,13 @@ const workerScript = path.resolve("test/store-worker.ts");
 const runWorker = (id: string) =>
   promisify(execFile)(process.execPath, [workerScript, id, String(ITERATIONS)]);
 
+updateStore(() => ({ result: null }));
+const staleLock = `${storePath()}.lock`;
+fs.mkdirSync(staleLock);
+fs.writeFileSync(path.join(staleLock, "crashed-owner"), "");
+const staleTime = new Date(Date.now() - 20_000);
+fs.utimesSync(staleLock, staleTime, staleTime);
+
 const results: string[] = [];
 const errors: string[] = [];
 await Promise.all(
@@ -41,7 +48,7 @@ await Promise.all(
   ),
 );
 
-check("all workers completed", errors.length === 0, errors.join("; "));
+check("all workers completed after simultaneous stale-lock recovery", errors.length === 0, errors.join("; "));
 for (const line of results) console.log(`       ${line}`);
 
 const store = readStore();
@@ -64,6 +71,10 @@ check(
 
 JSON.parse(fs.readFileSync(storePath(), "utf8"));
 check("store file parses as JSON after concurrent writes", true);
+check(
+  "store and recovery locks released",
+  !fs.existsSync(staleLock) && !fs.existsSync(`${staleLock}.recovery`),
+);
 
 logEvent("test_marker", { n: 1 });
 const marker = readLog().find((e) => e.event === "test_marker");

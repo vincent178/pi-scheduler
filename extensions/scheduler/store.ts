@@ -101,13 +101,43 @@ function lockPath(): string {
   return `${storePath()}.lock`;
 }
 
-function acquireStoreLock(): void {
+function recoveryPath(): string {
+  return `${lockPath()}.recovery`;
+}
+
+function removeStaleStoreLock(): void {
+  // Only the recovery-lock holder may remove a stale store lock.
+  try {
+    fs.mkdirSync(recoveryPath());
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return;
+    throw err;
+  }
+
+  try {
+    const age = Date.now() - fs.statSync(lockPath()).mtimeMs;
+    if (age > LOCK_STALE_MS) fs.rmSync(lockPath(), { recursive: true, force: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  } finally {
+    fs.rmdirSync(recoveryPath());
+  }
+}
+
+function acquireStoreLock(): string {
   ensureDir();
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   while (true) {
+    const owner = crypto.randomBytes(16).toString("hex");
     try {
       fs.mkdirSync(lockPath());
-      return;
+      try {
+        fs.writeFileSync(path.join(lockPath(), owner), "");
+        return owner;
+      } catch (err) {
+        fs.rmdirSync(lockPath());
+        throw err;
+      }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
@@ -115,7 +145,7 @@ function acquireStoreLock(): void {
     try {
       const age = Date.now() - fs.statSync(lockPath()).mtimeMs;
       if (age > LOCK_STALE_MS) {
-        fs.rmdirSync(lockPath());
+        removeStaleStoreLock();
         continue;
       }
     } catch (err) {
@@ -128,23 +158,32 @@ function acquireStoreLock(): void {
   }
 }
 
-function releaseStoreLock(): void {
+function releaseStoreLock(owner: string): void {
+  // The owner file prevents an expired holder from removing a replacement lock.
+  try {
+    fs.unlinkSync(path.join(lockPath(), owner));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+
   try {
     fs.rmdirSync(lockPath());
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTEMPTY") throw err;
   }
 }
 
 export function updateStore<T>(fn: (data: StoreData) => { data?: StoreData; result: T }): T {
-  acquireStoreLock();
+  const owner = acquireStoreLock();
   try {
     const current = readStore();
     const { data, result } = fn(current);
     writeStore(data ?? current);
     return result;
   } finally {
-    releaseStoreLock();
+    releaseStoreLock(owner);
   }
 }
 
