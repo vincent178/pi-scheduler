@@ -93,7 +93,7 @@ function writeStore(data: StoreData): void {
 }
 
 const LOCK_RETRY_MS = 5;
-const LOCK_TIMEOUT_MS = 5_000;
+const LOCK_TIMEOUT_MS = 250;
 const lockWaitArray = new Int32Array(new SharedArrayBuffer(4));
 
 function lockPath(): string {
@@ -129,9 +129,8 @@ function releaseLock(path: string, owner: string): void {
   }
 }
 
-function acquireLock(path: string): string {
+function acquireLock(path: string, deadline = Date.now() + LOCK_TIMEOUT_MS): string {
   const owner = `${process.pid}-${crypto.randomBytes(16).toString("hex")}`;
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
   while (true) {
     try {
       fs.symlinkSync(owner, path);
@@ -141,15 +140,15 @@ function acquireLock(path: string): string {
     }
 
     const deadOwner = deadLockOwner(path);
-    if (deadOwner) removeDeadLock(path, deadOwner);
+    if (deadOwner) removeDeadLock(path, deadOwner, deadline);
     if (Date.now() >= deadline) throw new Error(`Timed out waiting for the scheduler lock: ${path}`);
     Atomics.wait(lockWaitArray, 0, 0, LOCK_RETRY_MS);
   }
 }
 
-function removeDeadLock(path: string, deadOwner: string): void {
+function removeDeadLock(path: string, deadOwner: string, deadline: number): void {
   const recoveryPath = `${path}.recovery`;
-  const recoveryOwner = acquireLock(recoveryPath);
+  const recoveryOwner = acquireLock(recoveryPath, deadline);
   try {
     // Remove only the owner that passed the liveness check.
     releaseLock(path, deadOwner);
