@@ -113,7 +113,6 @@ check("B fires after A goes stale", hostB.prompts.length === 1);
 check("stickiness transferred to B", store.tasks[0]?.sticky_session_id === "session-B");
 
 // Sequential claims: the second session observes the first's write and skips.
-// (A true cross-process race may double-fire; that loss is tolerated by design.)
 const r2 = addScheduledTask({ prompt: "race target" });
 engineA.fireDue();
 engineB.fireDue();

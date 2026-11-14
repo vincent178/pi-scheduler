@@ -57,8 +57,7 @@ function ensureDir(): void {
   fs.mkdirSync(dataDir(), { recursive: true });
 }
 
-// No cross-process lock: writes are atomic (tmp-write + rename) and a lost
-// concurrent update is tolerated. Corrupt files are quarantined on read.
+// Atomic rename protects readers. The lock protects read-modify-write updates.
 
 function emptyStore(): StoreData {
   return { tasks: [], sessions: {} };
@@ -93,11 +92,60 @@ function writeStore(data: StoreData): void {
   fs.renameSync(tmp, storePath());
 }
 
+const LOCK_RETRY_MS = 5;
+const LOCK_TIMEOUT_MS = 5_000;
+const LOCK_STALE_MS = 10_000;
+const lockWaitArray = new Int32Array(new SharedArrayBuffer(4));
+
+function lockPath(): string {
+  return `${storePath()}.lock`;
+}
+
+function acquireStoreLock(): void {
+  ensureDir();
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  while (true) {
+    try {
+      fs.mkdirSync(lockPath());
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+
+    try {
+      const age = Date.now() - fs.statSync(lockPath()).mtimeMs;
+      if (age > LOCK_STALE_MS) {
+        fs.rmdirSync(lockPath());
+        continue;
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
+    }
+
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for the scheduler store lock");
+    Atomics.wait(lockWaitArray, 0, 0, LOCK_RETRY_MS);
+  }
+}
+
+function releaseStoreLock(): void {
+  try {
+    fs.rmdirSync(lockPath());
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
 export function updateStore<T>(fn: (data: StoreData) => { data?: StoreData; result: T }): T {
-  const current = readStore();
-  const { data, result } = fn(current);
-  writeStore(data ?? current);
-  return result;
+  acquireStoreLock();
+  try {
+    const current = readStore();
+    const { data, result } = fn(current);
+    writeStore(data ?? current);
+    return result;
+  } finally {
+    releaseStoreLock();
+  }
 }
 
 // A session is dead once its heartbeat is older than this (heartbeat: 30s).

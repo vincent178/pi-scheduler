@@ -90,11 +90,11 @@ history.
 
 | File | Contents |
 |---|---|
-| `~/.pi/agent/scheduler.json` | task store + session presence registry (atomic tmp-write + rename) |
+| `~/.pi/agent/scheduler.json` | task store + session presence registry (cross-process lock + atomic rename) |
 | `~/.pi/agent/scheduler.log` | append-only JSONL run log |
 
-One race is accepted by design: two sessions firing the same task simultaneously may both
-deliver — the store favors simplicity over serialization.
+Store updates use a cross-process lock. A due task has one firing session, even when
+several sessions wake together.
 
 ## Development
 
@@ -103,7 +103,7 @@ npm install
 pi -ne -e .     # -ne avoids conflicts with an installed copy
 ```
 
-Type check plus seven plain-`node` test scripts, including a pty-driven e2e that renders
+Type check plus plain-`node` test scripts, including a pty-driven e2e that renders
 the panel in a real pi TUI — see [AGENTS.md](AGENTS.md) for the full verification loop.
 
 ## License

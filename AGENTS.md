@@ -16,7 +16,7 @@ time B. A notify-only task is just a reminder. See README.md for the full design
 
 - **Occam's Razor**: never introduce a field, state, variant, or branch without a real consumer. Derive state from existing data instead of adding fields to carry it.
 - **Comments**: only document non-obvious constraints, invariants, or external behavior
-  (e.g. the no-lock tolerance contract, heartbeat/staleness relation, chrono parsing
+  (e.g. the store-locking contract, heartbeat/staleness relation, chrono parsing
   workarounds, pi lifecycle ordering). Do not narrate what the code already says.
   No section-banner comments.
 - Erasable TypeScript only (no enums, no parameter properties): Node ≥ 22.6 runs the
@@ -42,6 +42,7 @@ node test/tool-schedule.ts
 node test/tool-scope.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node test/store.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node test/engine.ts
+node test/engine-concurrency.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node test/engine-timers.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node test/ui.ts
 PI_SCHEDULER_DIR=$(mktemp -d) node test/e2e.ts
@@ -57,6 +58,7 @@ Store/engine tests must use a fresh `PI_SCHEDULER_DIR` scratch dir — never the
   extension factory; `session_shutdown` cleanup is idempotent and releases sticky claims.
 - One-shot tasks are deleted from the store after firing; the run log is their history.
 - A project task never fires outside its project; stickiness never overrides scoping.
+- Store updates serialize across processes; one due task has one firing session.
 - Overdue tasks are never auto-fired: they wait for the session-start pick.
 
 ## Git
