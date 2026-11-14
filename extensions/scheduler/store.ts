@@ -114,7 +114,8 @@ function deadLockOwner(path: string): string | null {
   try {
     owner = fs.readlinkSync(path);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EINVAL") return null;
     throw err;
   }
   const match = /^(\d+)-[a-f0-9]{32}$/.exec(owner);
@@ -125,13 +126,15 @@ function releaseLock(path: string, owner: string): void {
   try {
     if (fs.readlinkSync(path) === owner) fs.unlinkSync(path);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "EINVAL") throw err;
   }
 }
 
 function acquireLock(path: string, deadline = Date.now() + LOCK_TIMEOUT_MS): string {
   const owner = `${process.pid}-${crypto.randomBytes(16).toString("hex")}`;
   while (true) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for the scheduler lock: ${path}`);
     try {
       fs.symlinkSync(owner, path);
       return owner;
