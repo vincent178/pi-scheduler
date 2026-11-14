@@ -19,6 +19,15 @@ function check(name: string, ok: boolean, detail = ""): void {
   if (!ok) failures++;
 }
 
+function pathExists(path: string): boolean {
+  try {
+    fs.lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 if (!process.env.PI_SCHEDULER_DIR) {
   console.error("set PI_SCHEDULER_DIR to a scratch directory");
   process.exit(2);
@@ -83,9 +92,9 @@ JSON.parse(fs.readFileSync(storePath(), "utf8"));
 check("store file parses as JSON after concurrent writes", true);
 check(
   "store and recovery locks released",
-  !fs.existsSync(staleLock) &&
-    !fs.existsSync(`${staleLock}.recovery`) &&
-    !fs.existsSync(`${staleLock}.recovery.recovery`),
+  !pathExists(staleLock) &&
+    !pathExists(`${staleLock}.recovery`) &&
+    !pathExists(`${staleLock}.recovery.recovery`),
 );
 
 logEvent("test_marker", { n: 1 });
