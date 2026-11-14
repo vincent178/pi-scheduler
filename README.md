@@ -94,7 +94,8 @@ history.
 | `~/.pi/agent/scheduler.log` | append-only JSONL run log |
 
 Store updates use a cross-process lock. A due task has one firing session, even when
-several sessions wake together.
+several sessions wake together. Locks record their process owner. Only dead owners are
+recovered, so a live writer cannot lose its lock.
 
 ## Development
 

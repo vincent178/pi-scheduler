@@ -1,6 +1,6 @@
 // Store layer verification: concurrent writers, atomicity under races, log cap.
 // Run: PI_SCHEDULER_DIR=$(mktemp -d) node test/store.ts
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -33,10 +33,20 @@ const runWorker = (id: string) =>
 
 updateStore(() => ({ result: null }));
 const staleLock = `${storePath()}.lock`;
-fs.mkdirSync(staleLock);
-fs.writeFileSync(path.join(staleLock, "crashed-owner"), "");
-const staleTime = new Date(Date.now() - 20_000);
-fs.utimesSync(staleLock, staleTime, staleTime);
+const liveOwner = `${process.pid}-${"f".repeat(32)}`;
+fs.symlinkSync(liveOwner, staleLock);
+const liveResult = spawnSync(process.execPath, [workerScript, "live-owner", "1"], { encoding: "utf8" });
+check(
+  "live owner lock is not evicted",
+  liveResult.status !== 0 && liveResult.stderr.includes("Timed out waiting for the scheduler lock"),
+);
+fs.unlinkSync(staleLock);
+
+const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+if (!deadPid) throw new Error("failed to create a dead process owner");
+const deadOwner = `${deadPid}-${"0".repeat(32)}`;
+fs.symlinkSync(deadOwner, staleLock);
+fs.symlinkSync(deadOwner, `${staleLock}.recovery`);
 
 const results: string[] = [];
 const errors: string[] = [];
@@ -73,7 +83,9 @@ JSON.parse(fs.readFileSync(storePath(), "utf8"));
 check("store file parses as JSON after concurrent writes", true);
 check(
   "store and recovery locks released",
-  !fs.existsSync(staleLock) && !fs.existsSync(`${staleLock}.recovery`),
+  !fs.existsSync(staleLock) &&
+    !fs.existsSync(`${staleLock}.recovery`) &&
+    !fs.existsSync(`${staleLock}.recovery.recovery`),
 );
 
 logEvent("test_marker", { n: 1 });

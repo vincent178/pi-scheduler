@@ -94,96 +94,81 @@ function writeStore(data: StoreData): void {
 
 const LOCK_RETRY_MS = 5;
 const LOCK_TIMEOUT_MS = 5_000;
-const LOCK_STALE_MS = 10_000;
 const lockWaitArray = new Int32Array(new SharedArrayBuffer(4));
 
 function lockPath(): string {
   return `${storePath()}.lock`;
 }
 
-function recoveryPath(): string {
-  return `${lockPath()}.recovery`;
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
 }
 
-function removeStaleStoreLock(): void {
-  // Only the recovery-lock holder may remove a stale store lock.
+function isDeadLock(path: string): boolean {
+  let owner: string;
   try {
-    fs.mkdirSync(recoveryPath());
+    owner = fs.readlinkSync(path);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "EEXIST") return;
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw err;
   }
+  const match = /^(\d+)-[a-f0-9]{32}$/.exec(owner);
+  return match !== null && !isProcessAlive(Number(match[1]));
+}
 
+function releaseLock(path: string, owner: string): void {
   try {
-    const age = Date.now() - fs.statSync(lockPath()).mtimeMs;
-    if (age > LOCK_STALE_MS) fs.rmSync(lockPath(), { recursive: true, force: true });
+    if (fs.readlinkSync(path) === owner) fs.unlinkSync(path);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-  } finally {
-    fs.rmdirSync(recoveryPath());
   }
 }
 
-function acquireStoreLock(): string {
-  ensureDir();
+function acquireLock(path: string): string {
+  const owner = `${process.pid}-${crypto.randomBytes(16).toString("hex")}`;
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   while (true) {
-    const owner = crypto.randomBytes(16).toString("hex");
     try {
-      fs.mkdirSync(lockPath());
-      try {
-        fs.writeFileSync(path.join(lockPath(), owner), "");
-        return owner;
-      } catch (err) {
-        fs.rmdirSync(lockPath());
-        throw err;
-      }
+      fs.symlinkSync(owner, path);
+      return owner;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
 
-    try {
-      const age = Date.now() - fs.statSync(lockPath()).mtimeMs;
-      if (age > LOCK_STALE_MS) {
-        removeStaleStoreLock();
-        continue;
-      }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw err;
-    }
-
-    if (Date.now() >= deadline) throw new Error("Timed out waiting for the scheduler store lock");
+    if (isDeadLock(path)) removeDeadLock(path);
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for the scheduler lock: ${path}`);
     Atomics.wait(lockWaitArray, 0, 0, LOCK_RETRY_MS);
   }
 }
 
-function releaseStoreLock(owner: string): void {
-  // The owner file prevents an expired holder from removing a replacement lock.
+function removeDeadLock(path: string): void {
+  const recoveryPath = `${path}.recovery`;
+  const recoveryOwner = acquireLock(recoveryPath);
   try {
-    fs.unlinkSync(path.join(lockPath(), owner));
+    // A live process can keep its lock. A dead process cannot resume a write.
+    if (isDeadLock(path)) fs.unlinkSync(path);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw err;
-  }
-
-  try {
-    fs.rmdirSync(lockPath());
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT" && code !== "ENOTEMPTY") throw err;
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  } finally {
+    releaseLock(recoveryPath, recoveryOwner);
   }
 }
 
 export function updateStore<T>(fn: (data: StoreData) => { data?: StoreData; result: T }): T {
-  const owner = acquireStoreLock();
+  ensureDir();
+  const owner = acquireLock(lockPath());
   try {
     const current = readStore();
     const { data, result } = fn(current);
     writeStore(data ?? current);
     return result;
   } finally {
-    releaseStoreLock(owner);
+    releaseLock(lockPath(), owner);
   }
 }
 
