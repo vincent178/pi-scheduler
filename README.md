@@ -96,7 +96,9 @@ history.
 Store updates use a cross-process lock. The scheduler claims each scheduled occurrence at most once across sessions.
 This applies to timers and overdue picks. An explicit `/schedule fire` can run a task outside its schedule.
 The scheduler records the claim before delivery. A session crash after the claim can prevent delivery.
-The scheduler recovers locks only when their owner PID no longer exists.
+Sessions that share the store must use the same host, PID namespace, and time namespace.
+On Linux and macOS, the scheduler can detect PID reuse from the process start time.
+If it cannot verify a different process start time, it recovers the lock only after the owner PID no longer exists.
 
 ## Development
 

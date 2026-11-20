@@ -40,16 +40,36 @@ const workerScript = path.resolve("test/store-worker.ts");
 const runWorker = (id: string) =>
   promisify(execFile)(process.execPath, [workerScript, id, String(ITERATIONS)]);
 
-updateStore(() => ({ result: null }));
 const staleLock = `${storePath()}.lock`;
-const liveOwner = `${process.pid}-${"f".repeat(32)}`;
-fs.symlinkSync(liveOwner, staleLock);
-const liveResult = spawnSync(process.execPath, [workerScript, "live-owner", "1"], { encoding: "utf8" });
-check(
-  "live owner lock is not evicted",
-  liveResult.status !== 0 && liveResult.stderr.includes("Timed out waiting for the scheduler lock"),
-);
-fs.unlinkSync(staleLock);
+const liveOwner = updateStore(() => ({ result: fs.readlinkSync(staleLock) }));
+const parts = liveOwner.split("-");
+for (const token of new Set([liveOwner, parts.slice(0, 2).join("-")])) {
+  fs.symlinkSync(token, staleLock);
+  const liveResult = spawnSync(process.execPath, [workerScript, "live-owner", "1"], { encoding: "utf8" });
+  check(
+    `live owner keeps the lock ${token === liveOwner ? "with the current token" : "with a legacy token"}`,
+    liveResult.status !== 0 &&
+      liveResult.stderr.includes("Timed out waiting for the scheduler lock") &&
+      fs.readlinkSync(staleLock) === token,
+  );
+  fs.unlinkSync(staleLock);
+}
+
+if (process.platform === "darwin" || process.platform === "linux") {
+  check("lock records the process start identity", /^[a-f0-9]{64}$/.test(parts[2] ?? ""));
+  if (parts.length === 3) {
+    const changed = parts[2].endsWith("0") ? "1" : "0";
+    parts[2] = parts[2].slice(0, -1) + changed;
+    fs.symlinkSync(parts.join("-"), staleLock);
+    try {
+      const recovered = updateStore(() => ({ result: true }));
+      check("a live PID with a different identity does not block recovery", recovered && !pathExists(staleLock));
+    } catch (err) {
+      check("a live PID with a different identity does not block recovery", false, String(err));
+      if (pathExists(staleLock)) fs.unlinkSync(staleLock);
+    }
+  }
+}
 
 const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
 if (!deadPid) throw new Error("failed to create a dead process owner");
