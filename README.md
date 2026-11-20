@@ -80,8 +80,8 @@ recurring tasks keep landing in the same session. Ownership releases on shutdown
 a ~90s stale heartbeat), and the next in-scope session claims the task. Stickiness never
 overrides scoping.
 
-**Missed tasks.** No daemon means tasks only fire while pi is running. Overdue in-scope
-tasks are listed at session start — pick which to fire; the rest wait for next time.
+**Missed tasks.** Tasks only fire while pi is running. At session start, pick which overdue tasks to fire.
+Each pick applies only to the scheduled occurrence shown. Unpicked occurrences wait for another session start.
 
 **Audit trail.** Every task event (`created`, `fired`, `sticky_claimed`, `deferred`,
 `cancelled`, …) is one JSON line in `~/.pi/agent/scheduler.log` (capped at ~1 MB);
@@ -90,11 +90,15 @@ history.
 
 | File | Contents |
 |---|---|
-| `~/.pi/agent/scheduler.json` | task store + session presence registry (atomic tmp-write + rename) |
+| `~/.pi/agent/scheduler.json` | task store + session presence registry (cross-process lock + atomic rename) |
 | `~/.pi/agent/scheduler.log` | append-only JSONL run log |
 
-One race is accepted by design: two sessions firing the same task simultaneously may both
-deliver — the store favors simplicity over serialization.
+Store updates use a cross-process lock. The scheduler claims each scheduled occurrence at most once across sessions.
+This applies to timers and overdue picks. An explicit `/schedule fire` can run a task outside its schedule.
+The scheduler records the claim before delivery. A session crash after the claim can prevent delivery.
+Sessions that share the store must use the same host, PID namespace, and time namespace.
+On Linux and macOS, the scheduler can detect PID reuse from the process start time.
+If it cannot verify a different process start time, it recovers the lock only after the owner PID no longer exists.
 
 ## Development
 
@@ -103,7 +107,7 @@ npm install
 pi -ne -e .     # -ne avoids conflicts with an installed copy
 ```
 
-Type check plus seven plain-`node` test scripts, including a pty-driven e2e that renders
+Type check plus plain-`node` test scripts, including a pty-driven e2e that renders
 the panel in a real pi TUI — see [AGENTS.md](AGENTS.md) for the full verification loop.
 
 ## License

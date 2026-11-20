@@ -28,4 +28,6 @@ jobs:
 
       - run: PI_SCHEDULER_DIR=$(mktemp -d) node test/engine.ts
 
+      - run: node test/engine-concurrency.ts
+
       - run: PI_SCHEDULER_DIR=$(mktemp -d) node test/engine-timers.ts

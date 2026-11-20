@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 export interface OnceSchedule {
   type: "once";
@@ -57,8 +58,7 @@ function ensureDir(): void {
   fs.mkdirSync(dataDir(), { recursive: true });
 }
 
-// No cross-process lock: writes are atomic (tmp-write + rename) and a lost
-// concurrent update is tolerated. Corrupt files are quarantined on read.
+// Atomic rename protects readers. The lock protects read-modify-write updates.
 
 function emptyStore(): StoreData {
   return { tasks: [], sessions: {} };
@@ -93,11 +93,126 @@ function writeStore(data: StoreData): void {
   fs.renameSync(tmp, storePath());
 }
 
+const LOCK_RETRY_MS = 5;
+const LOCK_TIMEOUT_MS = 250;
+const PROCESS_LOOKUP_MS = 50;
+const lockWaitArray = new Int32Array(new SharedArrayBuffer(4));
+let ownIdentity: string | null = null;
+
+function lockPath(): string {
+  return `${storePath()}.lock`;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function processStartIdentity(pid: number, deadline: number): string | null {
+  const remaining = Math.floor(deadline - performance.now());
+  if (remaining <= 0) return null;
+  try {
+    if (process.platform === "linux") {
+      const bootId = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      // Field 22 follows the command name, which can contain spaces and parentheses.
+      const start = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[19];
+      if (!bootId || !start || !/^\d+$/.test(start)) return null;
+      return crypto.createHash("sha256").update(`${bootId}:${start}`).digest("hex");
+    }
+    if (process.platform === "darwin") {
+      const start = execFileSync("/bin/ps", ["-p", String(pid), "-o", "lstart="], {
+        encoding: "utf8",
+        env: { LC_ALL: "C", TZ: "UTC" },
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: Math.min(remaining, PROCESS_LOOKUP_MS),
+        killSignal: "SIGKILL",
+      }).trim();
+      if (!/^[A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4}$/.test(start)) return null;
+      return crypto.createHash("sha256").update(start).digest("hex");
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function deadLockOwner(path: string, checked: Set<string>, deadline: number): string | null {
+  let owner: string;
+  try {
+    owner = fs.readlinkSync(path);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EINVAL") return null;
+    throw err;
+  }
+  const match = /^([1-9]\d*)-[a-f0-9]{32}(?:-([a-f0-9]{64}))?$/.exec(owner);
+  if (!match) return null;
+  const pid = Number(match[1]);
+  if (!isProcessAlive(pid)) return owner;
+  const recorded = match[2];
+  if (!recorded || checked.has(owner)) return null;
+  // Check a live PID's start identity once per token per acquisition.
+  checked.add(owner);
+  const current = processStartIdentity(pid, deadline);
+  return current !== null && current !== recorded ? owner : null;
+}
+
+function releaseLock(path: string, owner: string): void {
+  try {
+    if (fs.readlinkSync(path) === owner) fs.unlinkSync(path);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "EINVAL") throw err;
+  }
+}
+
+function acquireLock(path: string, deadline = performance.now() + LOCK_TIMEOUT_MS): string {
+  ownIdentity ??= processStartIdentity(process.pid, deadline);
+  const owner = `${process.pid}-${crypto.randomBytes(16).toString("hex")}${ownIdentity ? `-${ownIdentity}` : ""}`;
+  const checked = new Set<string>();
+  while (true) {
+    if (performance.now() >= deadline) throw new Error(`Timed out waiting for the scheduler lock: ${path}`);
+    try {
+      fs.symlinkSync(owner, path);
+      return owner;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+
+    const deadOwner = deadLockOwner(path, checked, deadline);
+    if (deadOwner) removeDeadLock(path, deadOwner, deadline);
+    if (performance.now() >= deadline) throw new Error(`Timed out waiting for the scheduler lock: ${path}`);
+    Atomics.wait(lockWaitArray, 0, 0, LOCK_RETRY_MS);
+  }
+}
+
+function removeDeadLock(path: string, deadOwner: string, deadline: number): void {
+  const recoveryPath = `${path}.recovery`;
+  const recoveryOwner = acquireLock(recoveryPath, deadline);
+  try {
+    // Remove only the token that identified the stale owner.
+    releaseLock(path, deadOwner);
+  } finally {
+    releaseLock(recoveryPath, recoveryOwner);
+  }
+}
+
 export function updateStore<T>(fn: (data: StoreData) => { data?: StoreData; result: T }): T {
-  const current = readStore();
-  const { data, result } = fn(current);
-  writeStore(data ?? current);
-  return result;
+  ensureDir();
+  const owner = acquireLock(lockPath());
+  try {
+    const current = readStore();
+    const { data, result } = fn(current);
+    writeStore(data ?? current);
+    return result;
+  } finally {
+    releaseLock(lockPath(), owner);
+  }
 }
 
 // A session is dead once its heartbeat is older than this (heartbeat: 30s).

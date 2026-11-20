@@ -1,6 +1,6 @@
 // Store layer verification: concurrent writers, atomicity under races, log cap.
 // Run: PI_SCHEDULER_DIR=$(mktemp -d) node test/store.ts
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -9,7 +9,6 @@ import {
   logPath,
   readStore,
   updateStore,
-  deregisterSession,
   logEvent,
   readLog,
 } from "../extensions/scheduler/store.ts";
@@ -18,6 +17,15 @@ let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
   if (!ok) failures++;
+}
+
+function pathExists(path: string): boolean {
+  try {
+    fs.lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 if (!process.env.PI_SCHEDULER_DIR) {
@@ -32,6 +40,43 @@ const workerScript = path.resolve("test/store-worker.ts");
 const runWorker = (id: string) =>
   promisify(execFile)(process.execPath, [workerScript, id, String(ITERATIONS)]);
 
+const staleLock = `${storePath()}.lock`;
+const liveOwner = updateStore(() => ({ result: fs.readlinkSync(staleLock) }));
+const parts = liveOwner.split("-");
+for (const token of new Set([liveOwner, parts.slice(0, 2).join("-")])) {
+  fs.symlinkSync(token, staleLock);
+  const liveResult = spawnSync(process.execPath, [workerScript, "live-owner", "1"], { encoding: "utf8" });
+  check(
+    `live owner keeps the lock ${token === liveOwner ? "with the current token" : "with a legacy token"}`,
+    liveResult.status !== 0 &&
+      liveResult.stderr.includes("Timed out waiting for the scheduler lock") &&
+      fs.readlinkSync(staleLock) === token,
+  );
+  fs.unlinkSync(staleLock);
+}
+
+if (process.platform === "darwin" || process.platform === "linux") {
+  check("lock records the process start identity", /^[a-f0-9]{64}$/.test(parts[2] ?? ""));
+  if (parts.length === 3) {
+    const changed = parts[2].endsWith("0") ? "1" : "0";
+    parts[2] = parts[2].slice(0, -1) + changed;
+    fs.symlinkSync(parts.join("-"), staleLock);
+    try {
+      const recovered = updateStore(() => ({ result: true }));
+      check("a live PID with a different identity does not block recovery", recovered && !pathExists(staleLock));
+    } catch (err) {
+      check("a live PID with a different identity does not block recovery", false, String(err));
+      if (pathExists(staleLock)) fs.unlinkSync(staleLock);
+    }
+  }
+}
+
+const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+if (!deadPid) throw new Error("failed to create a dead process owner");
+const deadOwner = `${deadPid}-${"0".repeat(32)}`;
+fs.symlinkSync(deadOwner, staleLock);
+fs.symlinkSync(deadOwner, `${staleLock}.recovery`);
+
 const results: string[] = [];
 const errors: string[] = [];
 await Promise.all(
@@ -42,24 +87,15 @@ await Promise.all(
   ),
 );
 
-check("all workers completed", errors.length === 0, errors.join("; "));
+check("all workers completed after simultaneous stale-lock recovery", errors.length === 0, errors.join("; "));
 for (const line of results) console.log(`       ${line}`);
-
-// A worker's final deregister write can be lost to a concurrent stale
-// read-modify-write (tolerated, no-lock contract). Re-deregister serially here
-// so the assertions below test deregisterSession semantics, not race luck.
-for (const id of Object.keys(readStore().sessions)) {
-  updateStore((data) => ({ result: deregisterSession(data, id) }));
-}
 
 const store = readStore();
 const counters = (store as unknown as { counters?: { total?: number } }).counters;
-// No lock: concurrent updates may be lost, which is tolerated. The contract
-// being tested is atomicity — reads always see a complete, valid store.
 check(
-  "counter within [1, workers*iterations] (losses tolerated)",
-  typeof counters?.total === "number" && counters.total >= 1 && counters.total <= WORKERS * ITERATIONS,
-  `total=${counters?.total}, max=${WORKERS * ITERATIONS}`,
+  "counter preserves every concurrent update",
+  counters?.total === WORKERS * ITERATIONS,
+  `total=${counters?.total}, expected=${WORKERS * ITERATIONS}`,
 );
 check("worker tasks persisted", store.tasks.length >= 1, `tasks=${store.tasks.length}`);
 check(
@@ -74,6 +110,12 @@ check(
 
 JSON.parse(fs.readFileSync(storePath(), "utf8"));
 check("store file parses as JSON after concurrent writes", true);
+check(
+  "store and recovery locks released",
+  !pathExists(staleLock) &&
+    !pathExists(`${staleLock}.recovery`) &&
+    !pathExists(`${staleLock}.recovery.recovery`),
+);
 
 logEvent("test_marker", { n: 1 });
 const marker = readLog().find((e) => e.event === "test_marker");
