@@ -40,8 +40,8 @@ export class Engine {
   private sweepTimer: NodeJS.Timeout | null = null;
   private unsubscribeIdle: (() => void) | null = null;
   private queue: ScheduledTask[] = [];
-  /** Overdue tasks awaiting the session-start pick; never auto-fired. */
-  private pendingPick = new Set<string>();
+  // A startup pick blocks only the occurrence shown in the picker.
+  private pendingPick = new Map<string, string>();
   private heldLogged = new Set<string>();
   private stopped = false;
 
@@ -112,29 +112,36 @@ export class Engine {
         this.claimableByMe(data, r),
     );
     for (const r of overdue) {
-      this.pendingPick.add(r.id);
+      this.pendingPick.set(r.id, r.next_fire_at);
       logEvent("overdue_listed", { id: r.id, session: this.host.sessionId });
     }
     return overdue;
   }
 
-  /** Force-claim for this session regardless of due time or current owner, then deliver. */
-  fireNow(id: string): boolean {
-    this.pendingPick.delete(id);
-    let task: ScheduledTask | null = null;
-    const found = updateStore((data) => {
-      const r = data.tasks.find((x) => x.id === id);
-      if (!r) return { result: false };
-      task = this.claim(data, r, true);
-      return { result: true };
-    });
-    if (!found || !task) return false;
+  fireOverdue(r: ScheduledTask): boolean {
+    if (this.stopped || !this.isPendingPick(r)) return false;
+    const task = this.claimDue(r, true);
+    if (!task) return false;
+    this.pendingPick.delete(r.id);
     this.deliver(task);
     this.armTimers();
     return true;
   }
 
-  /** Unpicked overdue tasks stay pending until the next session start. */
+  /** Force-claim for this session regardless of due time or current owner, then deliver. */
+  fireNow(id: string): boolean {
+    this.pendingPick.delete(id);
+    const task = updateStore((data) => {
+      const r = data.tasks.find((x) => x.id === id);
+      return { result: r ? this.claim(data, r, true) : null };
+    });
+    if (!task) return false;
+    this.deliver(task);
+    this.armTimers();
+    return true;
+  }
+
+  /** Unpicked occurrences stay pending until the next session start. */
   snoozeOverdue(id: string): void {
     logEvent("overdue_snoozed", { id, session: this.host.sessionId });
   }
@@ -174,7 +181,7 @@ export class Engine {
       if (this.stopped) return;
       if (!inScope(r, this.host.cwd)) continue;
       if (Date.parse(r.next_fire_at) > now) continue;
-      if (this.pendingPick.has(r.id)) continue;
+      if (this.isPendingPick(r)) continue;
       if (!this.claimableByMe(store, r)) {
         if (!this.heldLogged.has(r.id)) {
           this.heldLogged.add(r.id);
@@ -182,16 +189,24 @@ export class Engine {
         }
         continue;
       }
-      const claimed = updateStore((d) => {
-        const fresh = d.tasks.find((x) => x.id === r.id);
-        if (!fresh) return { result: false };
-        if (Date.parse(fresh.next_fire_at) > Date.now()) return { result: false };
-        if (!this.claimableByMe(d, fresh)) return { result: false };
-        this.claim(d, fresh, false);
-        return { result: true };
-      });
-      if (claimed) this.deliver(r);
+      const task = this.claimDue(r);
+      if (task) this.deliver(task);
     }
+  }
+
+  private isPendingPick(r: ScheduledTask): boolean {
+    return this.pendingPick.get(r.id) === r.next_fire_at;
+  }
+
+  private claimDue(r: ScheduledTask, manual = false): ScheduledTask | null {
+    return updateStore((data) => {
+      const fresh = data.tasks.find((x) => x.id === r.id);
+      if (!fresh || fresh.next_fire_at !== r.next_fire_at) return { result: null };
+      const now = new Date();
+      if (Date.parse(fresh.next_fire_at) > now.getTime() || !inScope(fresh, this.host.cwd)) return { result: null };
+      if (!this.claimableByMe(data, fresh)) return { result: null };
+      return { result: this.claim(data, fresh, manual, now) };
+    });
   }
 
   private claimableByMe(data: StoreData, r: ScheduledTask): boolean {
@@ -199,16 +214,15 @@ export class Engine {
     return !isSessionAlive(data, r.sticky_session_id);
   }
 
-  private claim(data: StoreData, r: ScheduledTask, force: boolean): ScheduledTask {
+  private claim(data: StoreData, r: ScheduledTask, manual: boolean, now = new Date()): ScheduledTask {
     const previousOwner = r.sticky_session_id;
     const transferred = previousOwner !== null && previousOwner !== this.host.sessionId;
-    const now = new Date();
 
     r.sticky_session_id = this.host.sessionId;
     if (r.schedule.type === "once") {
       data.tasks = data.tasks.filter((x) => x.id !== r.id);
     } else {
-      r.next_fire_at = force && Date.parse(r.next_fire_at) > now.getTime()
+      r.next_fire_at = manual && Date.parse(r.next_fire_at) > now.getTime()
         ? r.next_fire_at // manual fire of a future task keeps its slot
         : advanceNextFire(r.schedule, now)!;
     }
@@ -219,7 +233,7 @@ export class Engine {
     } else if (!previousOwner) {
       logEvent("sticky_claimed", { id: r.id, session: this.host.sessionId });
     }
-    logEvent("fired", { id: r.id, session: this.host.sessionId, delivery: r.delivery, manual: force });
+    logEvent("fired", { id: r.id, session: this.host.sessionId, delivery: r.delivery, manual });
     if (r.schedule.type === "once") logEvent("deleted_after_fire", { id: r.id });
     return snapshot;
   }
@@ -235,7 +249,7 @@ export class Engine {
     }
     const now = Date.now();
     for (const r of store.tasks) {
-      if (!inScope(r, this.host.cwd) || this.pendingPick.has(r.id)) continue;
+      if (!inScope(r, this.host.cwd) || this.isPendingPick(r)) continue;
       if (!this.claimableByMe(store, r)) continue;
       const delay = Date.parse(r.next_fire_at) - now;
       if (delay <= 0) continue;

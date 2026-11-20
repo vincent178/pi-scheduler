@@ -225,7 +225,7 @@ export default function (pi: ExtensionAPI) {
         (_tui, theme, _kb, done) => new OverduePickComponent(overdue, theme, (ids) => done(ids)),
       );
       for (const r of overdue) {
-        if (fireIds.includes(r.id) && engine) engine.fireNow(r.id);
+        if (fireIds.includes(r.id) && engine) engine.fireOverdue(r);
         else engine?.snoozeOverdue(r.id);
       }
       return;
@@ -242,7 +242,7 @@ export default function (pi: ExtensionAPI) {
         `⏰ ${r.prompt}\n\nwas due ${due} (${relTime(r.next_fire_at)})\n\nFire it now in this session?`,
       );
       if (fire && engine) {
-        engine.fireNow(r.id);
+        engine.fireOverdue(r);
       } else {
         engine?.snoozeOverdue(r.id);
       }

@@ -80,8 +80,8 @@ recurring tasks keep landing in the same session. Ownership releases on shutdown
 a ~90s stale heartbeat), and the next in-scope session claims the task. Stickiness never
 overrides scoping.
 
-**Missed tasks.** No daemon means tasks only fire while pi is running. Overdue in-scope
-tasks are listed at session start — pick which to fire; the rest wait for next time.
+**Missed tasks.** Tasks only fire while pi is running. At session start, pick which overdue tasks to fire.
+Each pick applies only to the scheduled occurrence shown. Unpicked occurrences wait for another session start.
 
 **Audit trail.** Every task event (`created`, `fired`, `sticky_claimed`, `deferred`,
 `cancelled`, …) is one JSON line in `~/.pi/agent/scheduler.log` (capped at ~1 MB);
@@ -93,9 +93,10 @@ history.
 | `~/.pi/agent/scheduler.json` | task store + session presence registry (cross-process lock + atomic rename) |
 | `~/.pi/agent/scheduler.log` | append-only JSONL run log |
 
-Store updates use a cross-process lock. A due task has one firing session, even when
-several sessions wake together. Locks record their process owner. Only dead owners are
-recovered, so a live writer cannot lose its lock.
+Store updates use a cross-process lock. The scheduler claims each scheduled occurrence at most once across sessions.
+This applies to timers and overdue picks. An explicit `/schedule fire` can run a task outside its schedule.
+The scheduler records the claim before delivery. A session crash after the claim can prevent delivery.
+The scheduler recovers locks only when their owner PID no longer exists.
 
 ## Development
 

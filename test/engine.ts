@@ -186,13 +186,28 @@ updateStore((data) => {
 });
 const r7 = addScheduledTask({ prompt: "overdue pick me", next_fire_at: new Date(Date.now() - 3_600_000).toISOString() });
 const overdue = engineC.collectOverdue();
-check("collectOverdue lists due claimable tasks", overdue.some((r) => r.id === r7.id));
+const picked = overdue.find((r) => r.id === r7.id);
+const stalePick = engineB.collectOverdue().find((r) => r.id === r7.id);
+check("collectOverdue lists due claimable tasks", Boolean(picked && stalePick));
 engineC.fireDue();
-check("pending-pick task not auto-fired by fireDue", !hostC.prompts.some((p) => p.includes("overdue pick me")));
-const fired = engineC.fireNow(r7.id);
-check("fireNow delivers picked task", fired && hostC.prompts.some((p) => p.includes("overdue pick me")));
+check("pending occurrence does not fire automatically", !hostC.prompts.some((p) => p.includes("overdue pick me")));
+const fired = picked !== undefined && engineC.fireOverdue(picked);
+check("fireOverdue delivers the selected occurrence", fired && hostC.prompts.some((p) => p.includes("overdue pick me")));
 store = readStore();
-check("picking transfers stickiness", store.tasks.find((r) => r.id === r7.id)?.sticky_session_id === "session-C");
+check("picking assigns stickiness", store.tasks.find((r) => r.id === r7.id)?.sticky_session_id === "session-C");
+
+updateStore((data) => {
+  const r = data.tasks.find((x) => x.id === r7.id)!;
+  r.sticky_session_id = null;
+  r.next_fire_at = new Date(Date.now() - 1000).toISOString();
+  return { result: null };
+});
+check("a stale pick cannot fire a different due occurrence", stalePick !== undefined && !engineB.fireOverdue(stalePick));
+engineB.fireDue();
+check("a stale pick does not block the next occurrence", hostB.prompts.filter((p) => p.includes("overdue pick me")).length === 1);
+const nextFire = readStore().tasks.find((r) => r.id === r7.id)?.next_fire_at;
+check("fireNow still forces a future task to fire", engineC.fireNow(r7.id));
+check("fireNow preserves the future occurrence", nextFire !== undefined && readStore().tasks.find((r) => r.id === r7.id)?.next_fire_at === nextFire);
 engineC.snoozeOverdue("nonexistent"); // must not throw
 check("snooze is safe for unknown ids", true);
 
