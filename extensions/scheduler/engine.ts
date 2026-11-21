@@ -209,16 +209,43 @@ export class Engine {
     });
   }
 
+  private projectOwner(data: StoreData, r: ScheduledTask): string | null {
+    // The first live owner resolves legacy stores with split project ownership.
+    const owner = data.tasks.find((candidate) =>
+      candidate.scope === "project" &&
+      candidate.project_root === r.project_root &&
+      candidate.sticky_session_id !== null &&
+      isSessionAlive(data, candidate.sticky_session_id)
+    )?.sticky_session_id;
+    return owner ?? null;
+  }
+
   private claimableByMe(data: StoreData, r: ScheduledTask): boolean {
+    if (r.scope === "project") {
+      const owner = this.projectOwner(data, r);
+      return owner === null || owner === this.host.sessionId;
+    }
     if (!r.sticky_session_id || r.sticky_session_id === this.host.sessionId) return true;
     return !isSessionAlive(data, r.sticky_session_id);
   }
 
   private claim(data: StoreData, r: ScheduledTask, manual: boolean, now = new Date()): ScheduledTask {
-    const previousOwner = r.sticky_session_id;
-    const transferred = previousOwner !== null && previousOwner !== this.host.sessionId;
+    const claimed = r.scope === "project"
+      ? data.tasks.filter((candidate) =>
+        candidate.scope === "project" && candidate.project_root === r.project_root
+      )
+      : [r];
+    for (const task of claimed) {
+      const previousOwner = task.sticky_session_id;
+      if (previousOwner === this.host.sessionId) continue;
+      task.sticky_session_id = this.host.sessionId;
+      if (previousOwner) {
+        logEvent("sticky_transferred", { id: task.id, from: previousOwner, to: this.host.sessionId });
+      } else {
+        logEvent("sticky_claimed", { id: task.id, session: this.host.sessionId });
+      }
+    }
 
-    r.sticky_session_id = this.host.sessionId;
     if (r.schedule.type === "once") {
       data.tasks = data.tasks.filter((x) => x.id !== r.id);
     } else {
@@ -228,11 +255,6 @@ export class Engine {
     }
 
     const snapshot = { ...r };
-    if (transferred) {
-      logEvent("sticky_transferred", { id: r.id, from: previousOwner, to: this.host.sessionId });
-    } else if (!previousOwner) {
-      logEvent("sticky_claimed", { id: r.id, session: this.host.sessionId });
-    }
     logEvent("fired", { id: r.id, session: this.host.sessionId, delivery: r.delivery, manual });
     if (r.schedule.type === "once") logEvent("deleted_after_fire", { id: r.id });
     return snapshot;

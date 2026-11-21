@@ -75,10 +75,10 @@ or under the project root — the git repo root, or the scheduling directory for
 projects. `--global` tasks fire anywhere. Other projects' tasks surface only as a one-line
 digest at session start.
 
-**Stickiness.** The scheduling session owns a task; the firing session takes over, so
-recurring tasks keep landing in the same session. Ownership releases on shutdown (or after
-a ~90s stale heartbeat), and the next in-scope session claims the task. Stickiness never
-overrides scoping.
+**Stickiness.** Project tasks share one live session owner. The first eligible session to
+claim a task owns all tasks in that project. Other sessions skip those tasks. Global tasks
+keep per-task ownership. Ownership releases on shutdown (or after a ~90s stale heartbeat),
+and the next in-scope session can claim the project. Stickiness never overrides scoping.
 
 **Missed tasks.** Tasks only fire while pi is running. At session start, pick which overdue tasks to fire.
 Each pick applies only to the scheduled occurrence shown. Unpicked occurrences wait for another session start.
