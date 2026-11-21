@@ -9,6 +9,7 @@ import { newTaskId, touchSession, updateStore } from "../extensions/scheduler/st
 
 const PROJECT = "/project";
 const WORKER_COUNT = 8;
+const AUTOMATIC_TASKS = 4;
 
 async function runWorker(): Promise<void> {
 	const sessionId = process.argv[3]!;
@@ -33,11 +34,12 @@ async function runWorker(): Promise<void> {
 		engine.fireDue();
 		const automatic = fires;
 		engine.fireOverdue(overdue[0]);
-		process.send!({ type: "done", automatic, overdue: fires - automatic }, () => process.exit(0));
+		process.send!({ type: "done", worker: sessionId, automatic, overdue: fires - automatic }, () => process.exit(0));
 	});
 }
 
 interface WorkerResult {
+	worker?: string;
 	automatic?: number;
 	overdue?: number;
 }
@@ -97,15 +99,22 @@ async function runParent(): Promise<void> {
 	);
 	try {
 		await Promise.all(children.map((child) => waitForMessage(child, "ready")));
-		addDueTask("automatic occurrence");
+		for (let i = 0; i < AUTOMATIC_TASKS; i++) addDueTask(`automatic occurrence ${i}`);
 		const done = Promise.all(children.map((child) => waitForMessage(child, "done")));
 		for (const child of children) child.send("fire");
 		const results = await done;
-		for (const trigger of ["automatic", "overdue"] as const) {
-			const fires = results.reduce((sum, result) => sum + (result[trigger] ?? 0), 0);
-			assert.equal(fires, 1, `${trigger} occurrence fired ${fires} times across ${WORKER_COUNT} sessions`);
-			console.log(`PASS  concurrent claims for ${trigger} occurrence — fires=${fires}`);
-		}
+		const automaticFires = results.reduce((sum, result) => sum + (result.automatic ?? 0), 0);
+		assert.equal(automaticFires, AUTOMATIC_TASKS, "automatic occurrences must each fire once");
+		const automaticWinners = results.filter((result) => (result.automatic ?? 0) > 0);
+		assert.equal(automaticWinners.length, 1, "automatic project tasks split across sessions");
+		assert.equal(automaticWinners[0].automatic, AUTOMATIC_TASKS);
+		console.log(`PASS  ${AUTOMATIC_TASKS} automatic project tasks fired once in one session`);
+
+		const overdueFires = results.reduce((sum, result) => sum + (result.overdue ?? 0), 0);
+		assert.equal(overdueFires, 1, "overdue occurrence must fire once");
+		const overdueWinner = results.find((result) => result.overdue === 1);
+		assert.equal(overdueWinner?.worker, automaticWinners[0].worker, "overdue task changed the project owner");
+		console.log("PASS  overdue and automatic project tasks share one session");
 		console.log("\nALL CHECKS PASSED");
 	} finally {
 		for (const child of children) child.kill();

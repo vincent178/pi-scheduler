@@ -119,11 +119,20 @@ engineB.fireDue();
 const raceFires = hostA.prompts.filter((p) => p.includes("race target")).length +
   hostB.prompts.filter((p) => p.includes("race target")).length;
 check("second sequential claim does not re-fire", raceFires === 1, `fires=${raceFires}`);
+check("unowned task follows the project owner", hostB.prompts.some((p) => p.includes("race target")));
+
+const split = addScheduledTask({ prompt: "split project ownership", sticky_session_id: "session-A" });
+engineA.fireDue();
+engineB.fireDue();
+check("non-owner cannot fire its formerly owned project task", !hostA.prompts.some((p) => p.includes("split project ownership")));
+check("project owner fires every project task", hostB.prompts.some((p) => p.includes("split project ownership")));
+store = readStore();
+check("project claim consolidates split ownership", store.tasks.find((r) => r.id === split.id)?.sticky_session_id === "session-B");
 
 const r3 = addScheduledTask({ prompt: "one shot", schedule: { type: "once", at: new Date(Date.now() - 1000).toISOString() } });
-engineA.fireDue();
+engineB.fireDue();
 store = readStore();
-check("one-shot fired", hostA.prompts.some((p) => p.includes("one shot")));
+check("one-shot fired", hostB.prompts.some((p) => p.includes("one shot")));
 check("one-shot deleted after firing", !store.tasks.some((r) => r.id === r3.id));
 
 const r4 = addScheduledTask({ prompt: "busy test", sticky_session_id: "session-B" });
@@ -185,16 +194,16 @@ updateStore((data) => {
   return { result: null };
 });
 const r7 = addScheduledTask({ prompt: "overdue pick me", next_fire_at: new Date(Date.now() - 3_600_000).toISOString() });
-const overdue = engineC.collectOverdue();
+const overdue = engineB.collectOverdue();
 const picked = overdue.find((r) => r.id === r7.id);
-const stalePick = engineB.collectOverdue().find((r) => r.id === r7.id);
-check("collectOverdue lists due claimable tasks", Boolean(picked && stalePick));
-engineC.fireDue();
-check("pending occurrence does not fire automatically", !hostC.prompts.some((p) => p.includes("overdue pick me")));
-const fired = picked !== undefined && engineC.fireOverdue(picked);
-check("fireOverdue delivers the selected occurrence", fired && hostC.prompts.some((p) => p.includes("overdue pick me")));
+const nonOwnerPick = engineC.collectOverdue().find((r) => r.id === r7.id);
+check("only the project owner can pick an overdue task", picked !== undefined && nonOwnerPick === undefined);
+engineB.fireDue();
+check("pending occurrence does not fire automatically", !hostB.prompts.some((p) => p.includes("overdue pick me")));
+const fired = picked !== undefined && engineB.fireOverdue(picked);
+check("fireOverdue delivers the selected occurrence", fired && hostB.prompts.some((p) => p.includes("overdue pick me")));
 store = readStore();
-check("picking assigns stickiness", store.tasks.find((r) => r.id === r7.id)?.sticky_session_id === "session-C");
+check("picking keeps the project owner", store.tasks.find((r) => r.id === r7.id)?.sticky_session_id === "session-B");
 
 updateStore((data) => {
   const r = data.tasks.find((x) => x.id === r7.id)!;
@@ -202,9 +211,9 @@ updateStore((data) => {
   r.next_fire_at = new Date(Date.now() - 1000).toISOString();
   return { result: null };
 });
-check("a stale pick cannot fire a different due occurrence", stalePick !== undefined && !engineB.fireOverdue(stalePick));
+check("a stale pick cannot fire a different due occurrence", picked !== undefined && !engineB.fireOverdue(picked));
 engineB.fireDue();
-check("a stale pick does not block the next occurrence", hostB.prompts.filter((p) => p.includes("overdue pick me")).length === 1);
+check("a stale pick does not block the next occurrence", hostB.prompts.filter((p) => p.includes("overdue pick me")).length === 2);
 const nextFire = readStore().tasks.find((r) => r.id === r7.id)?.next_fire_at;
 check("fireNow still forces a future task to fire", engineC.fireNow(r7.id));
 check("fireNow preserves the future occurrence", nextFire !== undefined && readStore().tasks.find((r) => r.id === r7.id)?.next_fire_at === nextFire);
